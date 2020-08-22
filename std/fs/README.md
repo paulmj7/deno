@@ -174,8 +174,6 @@ async function printFilesNames() {
 printFilesNames().then(() => console.log("Done!"));
 ```
 
-<<<<<<< HEAD
-=======
 ### readFileStr
 
 Read file and output it as a string. Note: this module does not require the `--unstable` flag.
@@ -205,7 +203,6 @@ writeFileStr("./target.dat", "file content"); // returns a promise
 writeFileStrSync("./target.dat", "file content"); // void
 ```
 
->>>>>>> updated std/fs docs to provide more context on unstable perm
 ### expandGlob
 
 Expand the glob string from the specified `root` directory and yield each result
