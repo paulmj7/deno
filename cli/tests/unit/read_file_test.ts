@@ -1,11 +1,11 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
 import {
-  unitTest,
   assert,
   assertEquals,
   assertThrows,
   assertThrowsAsync,
   pathToAbsoluteFileUrl,
+  unitTest,
 } from "./test_util.ts";
 
 unitTest({ perms: { read: true } }, function readFileSyncSuccess(): void {
@@ -77,3 +77,43 @@ unitTest({ perms: { read: true } }, function readFileSyncLoop(): void {
     Deno.readFileSync("cli/tests/fixture.json");
   }
 });
+
+unitTest(
+  { perms: { read: true } },
+  async function readFileDoesNotLeakResources(): Promise<void> {
+    const resourcesBefore = Deno.resources();
+    await assertThrowsAsync(async () => await Deno.readFile("cli"));
+    assertEquals(resourcesBefore, Deno.resources());
+  },
+);
+
+unitTest(
+  { perms: { read: true } },
+  function readFileSyncDoesNotLeakResources(): void {
+    const resourcesBefore = Deno.resources();
+    assertThrows(() => Deno.readFileSync("cli"));
+    assertEquals(resourcesBefore, Deno.resources());
+  },
+);
+
+unitTest(
+  { perms: { read: true } },
+  async function readFileWithAbortSignal(): Promise<void> {
+    const ac = new AbortController();
+    queueMicrotask(() => ac.abort());
+    await assertThrowsAsync(async () => {
+      await Deno.readFile("cli/tests/fixture.json", { signal: ac.signal });
+    });
+  },
+);
+
+unitTest(
+  { perms: { read: true } },
+  async function readTextileWithAbortSignal(): Promise<void> {
+    const ac = new AbortController();
+    queueMicrotask(() => ac.abort());
+    await assertThrowsAsync(async () => {
+      await Deno.readTextFile("cli/tests/fixture.json", { signal: ac.signal });
+    });
+  },
+);

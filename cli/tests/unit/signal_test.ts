@@ -1,17 +1,12 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
 import {
-  unitTest,
   assert,
   assertEquals,
   assertThrows,
-  createResolvable,
+  deferred,
+  delay,
+  unitTest,
 } from "./test_util.ts";
-
-function defer(n: number): Promise<void> {
-  return new Promise((resolve: () => void, _) => {
-    setTimeout(resolve, n);
-  });
-}
 
 unitTest(
   { ignore: Deno.build.os !== "windows" },
@@ -106,18 +101,18 @@ unitTest(
 unitTest(
   { ignore: Deno.build.os === "windows", perms: { run: true, net: true } },
   async function signalStreamTest(): Promise<void> {
-    const resolvable = createResolvable();
+    const resolvable = deferred();
     // This prevents the program from exiting.
     const t = setInterval(() => {}, 1000);
 
     let c = 0;
     const sig = Deno.signal(Deno.Signal.SIGUSR1);
     setTimeout(async () => {
-      await defer(20);
+      await delay(20);
       for (const _ of Array(3)) {
         // Sends SIGUSR1 3 times.
         Deno.kill(Deno.pid, Deno.Signal.SIGUSR1);
-        await defer(20);
+        await delay(20);
       }
       sig.dispose();
       resolvable.resolve();
@@ -134,10 +129,28 @@ unitTest(
   },
 );
 
+// This tests that pending op_signal_poll doesn't block the runtime from exiting the process.
+unitTest(
+  { ignore: Deno.build.os === "windows", perms: { run: true, read: true } },
+  async function signalStreamExitTest(): Promise<void> {
+    const p = Deno.run({
+      cmd: [
+        Deno.execPath(),
+        "eval",
+        "--unstable",
+        "(async () => { for await (const _ of Deno.signals.io()) {} })()",
+      ],
+    });
+    const res = await p.status();
+    assertEquals(res.code, 0);
+    p.close();
+  },
+);
+
 unitTest(
   { ignore: Deno.build.os === "windows", perms: { run: true } },
   async function signalPromiseTest(): Promise<void> {
-    const resolvable = createResolvable();
+    const resolvable = deferred();
     // This prevents the program from exiting.
     const t = setInterval(() => {}, 1000);
 
@@ -151,6 +164,35 @@ unitTest(
 
     clearInterval(t);
     await resolvable;
+  },
+);
+
+// https://github.com/denoland/deno/issues/9806
+unitTest(
+  { ignore: Deno.build.os === "windows", perms: { run: true } },
+  async function signalPromiseTest2(): Promise<void> {
+    const resolvable = deferred();
+    // This prevents the program from exiting.
+    const t = setInterval(() => {}, 1000);
+
+    let called = false;
+    const sig = Deno.signal(Deno.Signal.SIGUSR1);
+    sig.then(() => {
+      called = true;
+    });
+    setTimeout(() => {
+      sig.dispose();
+      setTimeout(() => {
+        resolvable.resolve();
+      }, 10);
+    }, 10);
+
+    clearInterval(t);
+    await resolvable;
+
+    // Promise callback is not called because it didn't get
+    // the corresponding signal.
+    assert(!called);
   },
 );
 

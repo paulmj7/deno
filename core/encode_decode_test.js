@@ -1,4 +1,10 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
+"use strict";
+function assert(cond) {
+  if (!cond) {
+    throw Error("assert");
+  }
+}
 
 function assertArrayEquals(a1, a2) {
   if (a1.length !== a2.length) throw Error("assert");
@@ -41,6 +47,17 @@ function main() {
 
   assert(Deno.core.decode(new Uint8Array(fixture1)) === "𝓽𝓮𝔁𝓽");
   assert(Deno.core.decode(new Uint8Array(fixture2)) === "Hello �� World");
+
+  // See https://github.com/denoland/deno/issues/6649
+  let thrown = false;
+  try {
+    Deno.core.decode(new Uint8Array(2 ** 29));
+  } catch (e) {
+    thrown = true;
+    assert(e instanceof RangeError);
+    assert(e.message === "string too long");
+  }
+  assert(thrown);
 }
 
 main();

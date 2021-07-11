@@ -1,11 +1,13 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
+
+// deno-lint-ignore-file no-deprecated-deno-api
 
 // This code has been ported almost directly from Go's src/bytes/buffer_test.go
 // Copyright 2009 The Go Authors. All rights reserved. BSD license.
 // https://github.com/golang/go/blob/master/LICENSE
 import {
-  assertEquals,
   assert,
+  assertEquals,
   assertThrows,
   assertThrowsAsync,
   unitTest,
@@ -128,8 +130,8 @@ unitTest(async function bufferBasicOperations(): Promise<void> {
     await empty(buf, testString.slice(0, 20), new Uint8Array(5));
     await empty(buf, "", new Uint8Array(100));
 
-    // TODO buf.writeByte()
-    // TODO buf.readByte()
+    // TODO(bartlomieju): buf.writeByte()
+    // TODO(bartlomieju): buf.readByte()
   }
 });
 
@@ -329,9 +331,9 @@ unitTest(async function bufferReadFromSync(): Promise<void> {
 
 unitTest(async function bufferTestGrow(): Promise<void> {
   const tmp = new Uint8Array(72);
-  for (const startLen of [0, 100, 1000, 10000, 100000]) {
+  for (const startLen of [0, 100, 1000, 10000]) {
     const xBytes = repeat("x", startLen);
-    for (const growLen of [0, 100, 1000, 10000, 100000]) {
+    for (const growLen of [0, 100, 1000, 10000]) {
       const buf = new Deno.Buffer(xBytes.buffer as ArrayBuffer);
       // If we read, this affects buf.off, which is good to test.
       const nread = (await buf.read(tmp)) ?? 0;

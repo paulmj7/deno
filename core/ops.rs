@@ -1,179 +1,203 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
-use crate::core_isolate::CoreIsolateState;
-use crate::ZeroCopyBuf;
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
+
+use crate::error::type_error;
+use crate::error::AnyError;
+use crate::gotham_state::GothamState;
+use crate::resources::ResourceTable;
+use crate::runtime::GetErrorClassFn;
 use futures::Future;
-use std::collections::HashMap;
+use indexmap::IndexMap;
+use rusty_v8 as v8;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use std::cell::RefCell;
+use std::iter::once;
+use std::ops::Deref;
+use std::ops::DerefMut;
 use std::pin::Pin;
 use std::rc::Rc;
 
-pub type OpId = u32;
+pub type PromiseId = u64;
+pub type OpAsyncFuture = Pin<Box<dyn Future<Output = (PromiseId, OpResult)>>>;
+pub type OpFn = dyn Fn(Rc<RefCell<OpState>>, OpPayload) -> Op + 'static;
+pub type OpId = usize;
 
-pub type Buf = Box<[u8]>;
+pub struct OpPayload<'a, 'b, 'c> {
+  pub(crate) scope: &'a mut v8::HandleScope<'b>,
+  pub(crate) a: v8::Local<'c, v8::Value>,
+  pub(crate) b: v8::Local<'c, v8::Value>,
+  pub(crate) promise_id: PromiseId,
+}
 
-pub type OpAsyncFuture = Pin<Box<dyn Future<Output = Buf>>>;
+impl<'a, 'b, 'c> OpPayload<'a, 'b, 'c> {
+  pub fn deserialize<T: DeserializeOwned, U: DeserializeOwned>(
+    self,
+  ) -> Result<(T, U), AnyError> {
+    let a: T = serde_v8::from_v8(self.scope, self.a)
+      .map_err(AnyError::from)
+      .map_err(|e| type_error(format!("Error parsing args: {}", e)))?;
+
+    let b: U = serde_v8::from_v8(self.scope, self.b)
+      .map_err(AnyError::from)
+      .map_err(|e| type_error(format!("Error parsing args: {}", e)))?;
+    Ok((a, b))
+  }
+}
 
 pub enum Op {
-  Sync(Buf),
+  Sync(OpResult),
   Async(OpAsyncFuture),
   /// AsyncUnref is the variation of Async, which doesn't block the program
   /// exiting.
   AsyncUnref(OpAsyncFuture),
+  NotFound,
 }
 
-/// Main type describing op
-pub type OpDispatcher =
-  dyn Fn(&mut CoreIsolateState, &mut [ZeroCopyBuf]) -> Op + 'static;
-
-#[derive(Default)]
-pub struct OpRegistry {
-  dispatchers: Vec<Rc<OpDispatcher>>,
-  name_to_id: HashMap<String, OpId>,
+pub enum OpResult {
+  Ok(serde_v8::SerializablePkg),
+  Err(OpError),
 }
 
-impl OpRegistry {
-  pub fn new() -> Self {
-    let mut registry = Self::default();
-    let op_id = registry.register("ops", |state, _| {
-      let buf = state.op_registry.json_map();
-      Op::Sync(buf)
-    });
-    assert_eq!(op_id, 0);
-    registry
+impl OpResult {
+  pub fn to_v8<'a>(
+    &self,
+    scope: &mut v8::HandleScope<'a>,
+  ) -> Result<v8::Local<'a, v8::Value>, serde_v8::Error> {
+    match self {
+      Self::Ok(x) => x.to_v8(scope),
+      Self::Err(err) => serde_v8::to_v8(scope, err),
+    }
   }
+}
 
-  pub fn register<F>(&mut self, name: &str, op: F) -> OpId
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpError {
+  #[serde(rename = "$err_class_name")]
+  class_name: &'static str,
+  message: String,
+}
+
+pub fn serialize_op_result<R: Serialize + 'static>(
+  result: Result<R, AnyError>,
+  state: Rc<RefCell<OpState>>,
+) -> OpResult {
+  match result {
+    Ok(v) => OpResult::Ok(v.into()),
+    Err(err) => OpResult::Err(OpError {
+      class_name: (state.borrow().get_error_class_fn)(&err),
+      message: err.to_string(),
+    }),
+  }
+}
+
+/// Maintains the resources and ops inside a JS runtime.
+pub struct OpState {
+  pub resource_table: ResourceTable,
+  pub op_table: OpTable,
+  pub get_error_class_fn: GetErrorClassFn,
+  gotham_state: GothamState,
+}
+
+impl OpState {
+  pub(crate) fn new() -> OpState {
+    OpState {
+      resource_table: Default::default(),
+      op_table: OpTable::default(),
+      get_error_class_fn: &|_| "Error",
+      gotham_state: Default::default(),
+    }
+  }
+}
+
+impl Deref for OpState {
+  type Target = GothamState;
+
+  fn deref(&self) -> &Self::Target {
+    &self.gotham_state
+  }
+}
+
+impl DerefMut for OpState {
+  fn deref_mut(&mut self) -> &mut Self::Target {
+    &mut self.gotham_state
+  }
+}
+
+/// Collection for storing registered ops. The special 'get_op_catalog'
+/// op with OpId `0` is automatically added when the OpTable is created.
+pub struct OpTable(IndexMap<String, Rc<OpFn>>);
+
+impl OpTable {
+  pub fn register_op<F>(&mut self, name: &str, op_fn: F) -> OpId
   where
-    F: Fn(&mut CoreIsolateState, &mut [ZeroCopyBuf]) -> Op + 'static,
+    F: Fn(Rc<RefCell<OpState>>, OpPayload) -> Op + 'static,
   {
-    let op_id = self.dispatchers.len() as u32;
-
-    let existing = self.name_to_id.insert(name.to_string(), op_id);
-    assert!(
-      existing.is_none(),
-      format!("Op already registered: {}", name)
-    );
-    self.dispatchers.push(Rc::new(op));
+    let (op_id, prev) = self.0.insert_full(name.to_owned(), Rc::new(op_fn));
+    assert!(prev.is_none());
     op_id
   }
 
-  fn json_map(&self) -> Buf {
-    let op_map_json = serde_json::to_string(&self.name_to_id).unwrap();
-    op_map_json.as_bytes().to_owned().into_boxed_slice()
+  pub fn op_entries(state: Rc<RefCell<OpState>>) -> Vec<(String, OpId)> {
+    state.borrow().op_table.0.keys().cloned().zip(0..).collect()
   }
 
-  pub fn get(&self, op_id: OpId) -> Option<Rc<OpDispatcher>> {
-    self.dispatchers.get(op_id as usize).map(Rc::clone)
-  }
-
-  pub fn unregister_op(&mut self, name: &str) {
-    let id = self.name_to_id.remove(name).unwrap();
-    drop(self.dispatchers.remove(id as usize));
+  pub fn route_op(
+    op_id: OpId,
+    state: Rc<RefCell<OpState>>,
+    payload: OpPayload,
+  ) -> Op {
+    let op_fn = state
+      .borrow()
+      .op_table
+      .0
+      .get_index(op_id)
+      .map(|(_, op_fn)| op_fn.clone());
+    match op_fn {
+      Some(f) => (f)(state, payload),
+      None => Op::NotFound,
+    }
   }
 }
 
-#[test]
-fn test_op_registry() {
-  use crate::CoreIsolate;
-  use std::sync::atomic;
-  use std::sync::Arc;
-  let mut op_registry = OpRegistry::new();
-
-  let c = Arc::new(atomic::AtomicUsize::new(0));
-  let c_ = c.clone();
-
-  let test_id = op_registry.register("test", move |_, _| {
-    c_.fetch_add(1, atomic::Ordering::SeqCst);
-    Op::Sync(Box::new([]))
-  });
-  assert!(test_id != 0);
-
-  let mut expected = HashMap::new();
-  expected.insert("ops".to_string(), 0);
-  expected.insert("test".to_string(), 1);
-  assert_eq!(op_registry.name_to_id, expected);
-
-  let isolate = CoreIsolate::new(crate::StartupData::None, false);
-
-  let dispatch = op_registry.get(test_id).unwrap();
-  let state_rc = CoreIsolate::state(&isolate);
-  let mut state = state_rc.borrow_mut();
-  let res = dispatch(&mut state, &mut []);
-  if let Op::Sync(buf) = res {
-    assert_eq!(buf.len(), 0);
-  } else {
-    unreachable!();
+impl Default for OpTable {
+  fn default() -> Self {
+    fn dummy(_state: Rc<RefCell<OpState>>, _p: OpPayload) -> Op {
+      unreachable!()
+    }
+    Self(once(("ops".to_owned(), Rc::new(dummy) as _)).collect())
   }
-  assert_eq!(c.load(atomic::Ordering::SeqCst), 1);
-
-  assert!(op_registry.get(100).is_none());
-  op_registry.unregister_op("test");
-  expected.remove("test");
-  assert_eq!(op_registry.name_to_id, expected);
-  assert!(op_registry.get(1).is_none());
 }
 
-#[test]
-fn register_op_during_call() {
-  use crate::CoreIsolate;
-  use std::sync::atomic;
-  use std::sync::Arc;
-  use std::sync::Mutex;
-  let op_registry = Arc::new(Mutex::new(OpRegistry::new()));
+#[cfg(test)]
+mod tests {
+  use super::*;
 
-  let c = Arc::new(atomic::AtomicUsize::new(0));
-  let c_ = c.clone();
+  #[test]
+  fn op_table() {
+    let state = Rc::new(RefCell::new(OpState::new()));
 
-  let op_registry_ = op_registry.clone();
+    let foo_id;
+    let bar_id;
+    {
+      let op_table = &mut state.borrow_mut().op_table;
+      foo_id =
+        op_table.register_op("foo", |_, _| Op::Sync(OpResult::Ok(321.into())));
+      assert_eq!(foo_id, 1);
+      bar_id =
+        op_table.register_op("bar", |_, _| Op::Sync(OpResult::Ok(123.into())));
+      assert_eq!(bar_id, 2);
+    }
 
-  let test_id = {
-    let mut g = op_registry.lock().unwrap();
-    g.register("dynamic_register_op", move |_, _| {
-      let c__ = c_.clone();
-      let mut g = op_registry_.lock().unwrap();
-      g.register("test", move |_, _| {
-        c__.fetch_add(1, atomic::Ordering::SeqCst);
-        Op::Sync(Box::new([]))
-      });
-      Op::Sync(Box::new([]))
-    })
-  };
-  assert!(test_id != 0);
-
-  let isolate = CoreIsolate::new(crate::StartupData::None, false);
-
-  let dispatcher1 = {
-    let g = op_registry.lock().unwrap();
-    g.get(test_id).unwrap()
-  };
-  {
-    let state_rc = CoreIsolate::state(&isolate);
-    let mut state = state_rc.borrow_mut();
-    dispatcher1(&mut state, &mut []);
+    let mut catalog_entries = OpTable::op_entries(state);
+    catalog_entries.sort_by(|(_, id1), (_, id2)| id1.partial_cmp(id2).unwrap());
+    assert_eq!(
+      catalog_entries,
+      vec![
+        ("ops".to_owned(), 0),
+        ("foo".to_owned(), 1),
+        ("bar".to_owned(), 2)
+      ]
+    );
   }
-
-  let mut expected = HashMap::new();
-  expected.insert("ops".to_string(), 0);
-  expected.insert("dynamic_register_op".to_string(), 1);
-  expected.insert("test".to_string(), 2);
-  {
-    let g = op_registry.lock().unwrap();
-    assert_eq!(g.name_to_id, expected);
-  }
-
-  let dispatcher2 = {
-    let g = op_registry.lock().unwrap();
-    g.get(2).unwrap()
-  };
-  let state_rc = CoreIsolate::state(&isolate);
-  let mut state = state_rc.borrow_mut();
-  let res = dispatcher2(&mut state, &mut []);
-  if let Op::Sync(buf) = res {
-    assert_eq!(buf.len(), 0);
-  } else {
-    unreachable!();
-  }
-  assert_eq!(c.load(atomic::Ordering::SeqCst), 1);
-
-  let g = op_registry.lock().unwrap();
-  assert!(g.get(100).is_none());
 }

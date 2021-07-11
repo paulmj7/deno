@@ -1,5 +1,8 @@
-use crate::fs as deno_fs;
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
+
+use crate::fs_util;
 use crate::http_cache::url_to_filename;
+use deno_core::url::{Host, Url};
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
@@ -8,7 +11,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::path::Prefix;
 use std::str;
-use url::{Host, Url};
 
 #[derive(Clone)]
 pub struct DiskCache {
@@ -44,7 +46,7 @@ impl DiskCache {
     })
   }
 
-  pub fn get_cache_filename(&self, url: &Url) -> PathBuf {
+  fn get_cache_filename(&self, url: &Url) -> Option<PathBuf> {
     let mut out = PathBuf::new();
 
     let scheme = url.scheme();
@@ -65,9 +67,12 @@ impl DiskCache {
           out.push(path_seg);
         }
       }
-      "http" | "https" => out = url_to_filename(url),
+      "http" | "https" | "data" | "blob" => out = url_to_filename(url)?,
       "file" => {
-        let path = url.to_file_path().unwrap();
+        let path = match url.to_file_path() {
+          Ok(path) => path,
+          Err(_) => return None,
+        };
         let mut path_components = path.components();
 
         if cfg!(target_os = "windows") {
@@ -103,30 +108,25 @@ impl DiskCache {
 
         out = out.join(remaining_components);
       }
-      scheme => {
-        unimplemented!(
-          "Don't know how to create cache name for scheme: {}",
-          scheme
-        );
-      }
+      _ => return None,
     };
 
-    out
+    Some(out)
   }
 
   pub fn get_cache_filename_with_extension(
     &self,
     url: &Url,
     extension: &str,
-  ) -> PathBuf {
-    let base = self.get_cache_filename(url);
+  ) -> Option<PathBuf> {
+    let base = self.get_cache_filename(url)?;
 
     match base.extension() {
-      None => base.with_extension(extension),
+      None => Some(base.with_extension(extension)),
       Some(ext) => {
         let original_extension = OsStr::to_str(ext).unwrap();
         let final_extension = format!("{}.{}", original_extension, extension);
-        base.with_extension(final_extension)
+        Some(base.with_extension(final_extension))
       }
     }
   }
@@ -142,13 +142,8 @@ impl DiskCache {
       Some(ref parent) => self.ensure_dir_exists(parent),
       None => Ok(()),
     }?;
-    deno_fs::write_file(&path, data, 0o666)
+    fs_util::atomic_write_file(&path, data, crate::http_cache::CACHE_PERM)
       .map_err(|e| with_io_context(&e, format!("{:#?}", &path)))
-  }
-
-  pub fn remove(&self, filename: &Path) -> std::io::Result<()> {
-    let path = self.location.join(filename);
-    fs::remove_file(path)
   }
 }
 
@@ -175,12 +170,12 @@ mod tests {
     let mut cache_location = temp_dir.path().to_owned();
     assert!(fs::remove_dir(&cache_location).is_ok());
     cache_location.push("foo");
-    assert_eq!(cache_location.is_dir(), false);
+    assert!(!cache_location.is_dir());
     let cache = DiskCache::new(&cache_location);
     cache
       .ensure_dir_exists(&cache.location)
       .expect("Testing expect:");
-    assert_eq!(cache_location.is_dir(), true);
+    assert!(cache_location.is_dir());
   }
 
   #[test]
@@ -236,7 +231,7 @@ mod tests {
     for test_case in &test_cases {
       let cache_filename =
         cache.get_cache_filename(&Url::parse(test_case.0).unwrap());
-      assert_eq!(cache_filename, PathBuf::from(test_case.1));
+      assert_eq!(cache_filename, Some(PathBuf::from(test_case.1)));
     }
   }
 
@@ -282,8 +277,32 @@ mod tests {
           &Url::parse(test_case.0).unwrap(),
           test_case.1
         ),
-        PathBuf::from(test_case.2)
+        Some(PathBuf::from(test_case.2))
       )
+    }
+  }
+
+  #[test]
+  fn test_get_cache_filename_invalid_urls() {
+    let cache_location = if cfg!(target_os = "windows") {
+      PathBuf::from(r"C:\deno_dir\")
+    } else {
+      PathBuf::from("/deno_dir/")
+    };
+
+    let cache = DiskCache::new(&cache_location);
+
+    let mut test_cases = vec!["unknown://localhost/test.ts"];
+
+    if cfg!(target_os = "windows") {
+      test_cases.push("file://");
+      test_cases.push("file:///");
+    }
+
+    for test_case in &test_cases {
+      let cache_filename =
+        cache.get_cache_filename(&Url::parse(test_case).unwrap());
+      assert_eq!(cache_filename, None);
     }
   }
 }

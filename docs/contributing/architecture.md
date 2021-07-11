@@ -33,15 +33,21 @@ Metrics is Deno's internal counter for various statistics.
 
 ```shell
 > console.table(Deno.metrics())
-┌──────────────────┬────────┐
-│     (index)      │ Values │
-├──────────────────┼────────┤
-│  opsDispatched   │   9    │
-│   opsCompleted   │   9    │
-│ bytesSentControl │  504   │
-│  bytesSentData   │   0    │
-│  bytesReceived   │  856   │
-└──────────────────┴────────┘
+┌─────────────────────────┬───────────┐
+│          (idx)          │  Values   │
+├─────────────────────────┼───────────┤
+│      opsDispatched      │    9      │
+│    opsDispatchedSync    │    0      │
+│   opsDispatchedAsync    │    0      │
+│ opsDispatchedAsyncUnref │    0      │
+│      opsCompleted       │    9      │
+│    opsCompletedSync     │    0      │
+│    opsCompletedAsync    │    0      │
+│ opsCompletedAsyncUnref  │    0      │
+│    bytesSentControl     │   504     │
+│      bytesSentData      │    0      │
+│      bytesReceived      │   856     │
+└─────────────────────────┴───────────┘
 ```
 
 ### Schematic diagram
@@ -50,5 +56,9 @@ Metrics is Deno's internal counter for various statistics.
 
 ### Conference
 
-[Ryan Dahl - An interesting case with
-Deno](https://www.youtube.com/watch?v=1b7FoBwxc7E)
+- Ryan Dahl. (May 27, 2020).
+  [An interesting case with Deno](https://www.youtube.com/watch?v=1b7FoBwxc7E).
+  Deno Israel.
+- Bartek Iwańczuk. (Oct 6, 2020).
+  [Deno internals - how modern JS/TS runtime is
+  built](https://www.youtube.com/watch?v=AOvg_GbnsbA&t=35m13s). Paris Deno.

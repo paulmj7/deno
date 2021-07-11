@@ -1,31 +1,113 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
 //! This mod provides DenoError to unify errors across Deno.
-use crate::colors;
-use crate::source_maps::apply_source_map;
-use crate::source_maps::SourceMapGetter;
-use deno_core::ErrBox;
+use crate::colors::cyan;
+use crate::colors::italic_bold;
+use crate::colors::red;
+use crate::colors::yellow;
+use deno_core::error::{AnyError, JsError, JsStackFrame};
 use std::error::Error;
 use std::fmt;
 use std::ops::Deref;
 
 const SOURCE_ABBREV_THRESHOLD: usize = 150;
 
-pub fn format_location(filename: &str, line: i64, col: i64) -> String {
-  format!(
-    "{}:{}:{}",
-    colors::cyan(filename),
-    colors::yellow(&line.to_string()),
-    colors::yellow(&col.to_string())
-  )
+// Keep in sync with `runtime/js/40_error_stack.js`.
+pub fn format_location(frame: &JsStackFrame) -> String {
+  let _internal = frame
+    .file_name
+    .as_ref()
+    .map_or(false, |f| f.starts_with("deno:"));
+  if frame.is_native {
+    return cyan("native").to_string();
+  }
+  let mut result = String::new();
+  if let Some(file_name) = &frame.file_name {
+    result += &cyan(&file_name).to_string();
+  } else {
+    if frame.is_eval {
+      result +=
+        &(cyan(&frame.eval_origin.as_ref().unwrap()).to_string() + ", ");
+    }
+    result += &cyan("<anonymous>").to_string();
+  }
+  if let Some(line_number) = frame.line_number {
+    result += &format!("{}{}", ":", yellow(&line_number.to_string()));
+    if let Some(column_number) = frame.column_number {
+      result += &format!("{}{}", ":", yellow(&column_number.to_string()));
+    }
+  }
+  result
 }
 
-pub fn format_stack(
+// Keep in sync with `runtime/js/40_error_stack.js`.
+fn format_frame(frame: &JsStackFrame) -> String {
+  let _internal = frame
+    .file_name
+    .as_ref()
+    .map_or(false, |f| f.starts_with("deno:"));
+  let is_method_call =
+    !(frame.is_top_level.unwrap_or_default() || frame.is_constructor);
+  let mut result = String::new();
+  if frame.is_async {
+    result += "async ";
+  }
+  if frame.is_promise_all {
+    result += &italic_bold(&format!(
+      "Promise.all (index {})",
+      frame.promise_index.unwrap_or_default().to_string()
+    ))
+    .to_string();
+    return result;
+  }
+  if is_method_call {
+    let mut formatted_method = String::new();
+    if let Some(function_name) = &frame.function_name {
+      if let Some(type_name) = &frame.type_name {
+        if !function_name.starts_with(type_name) {
+          formatted_method += &format!("{}.", type_name);
+        }
+      }
+      formatted_method += &function_name;
+      if let Some(method_name) = &frame.method_name {
+        if !function_name.ends_with(method_name) {
+          formatted_method += &format!(" [as {}]", method_name);
+        }
+      }
+    } else {
+      if let Some(type_name) = &frame.type_name {
+        formatted_method += &format!("{}.", type_name);
+      }
+      if let Some(method_name) = &frame.method_name {
+        formatted_method += &method_name
+      } else {
+        formatted_method += "<anonymous>";
+      }
+    }
+    result += &italic_bold(&formatted_method).to_string();
+  } else if frame.is_constructor {
+    result += "new ";
+    if let Some(function_name) = &frame.function_name {
+      result += &italic_bold(&function_name).to_string();
+    } else {
+      result += &cyan("<anonymous>").to_string();
+    }
+  } else if let Some(function_name) = &frame.function_name {
+    result += &italic_bold(&function_name).to_string();
+  } else {
+    result += &format_location(frame);
+    return result;
+  }
+  result += &format!(" ({})", format_location(frame));
+  result
+}
+
+fn format_stack(
   is_error: bool,
   message_line: &str,
   source_line: Option<&str>,
   start_column: Option<i64>,
   end_column: Option<i64>,
-  formatted_frames: &[String],
+  frames: &[JsStackFrame],
   level: usize,
 ) -> String {
   let mut s = String::new();
@@ -37,11 +119,11 @@ pub fn format_stack(
     is_error,
     level,
   ));
-  for formatted_frame in formatted_frames {
+  for frame in frames {
     s.push_str(&format!(
       "\n{:indent$}    at {}",
       "",
-      formatted_frame,
+      format_frame(frame),
       indent = level
     ));
   }
@@ -93,9 +175,9 @@ fn format_maybe_source_line(
     s.push(underline_char);
   }
   let color_underline = if is_error {
-    colors::red(&s).to_string()
+    red(&s).to_string()
   } else {
-    colors::cyan(&s).to_string()
+    cyan(&s).to_string()
   };
 
   let indent = format!("{:indent$}", "", indent = level);
@@ -103,55 +185,44 @@ fn format_maybe_source_line(
   format!("\n{}{}\n{}{}", indent, source_line, indent, color_underline)
 }
 
-/// Wrapper around deno_core::JSError which provides color to_string.
+/// Wrapper around deno_core::JsError which provides colorful
+/// string representation.
 #[derive(Debug)]
-pub struct JSError(deno_core::JSError);
+pub struct PrettyJsError(JsError);
 
-impl JSError {
-  pub fn create(
-    core_js_error: deno_core::JSError,
-    source_map_getter: &impl SourceMapGetter,
-  ) -> ErrBox {
-    let core_js_error = apply_source_map(&core_js_error, source_map_getter);
-    let js_error = Self(core_js_error);
-    ErrBox::from(js_error)
+impl PrettyJsError {
+  pub fn create(js_error: JsError) -> AnyError {
+    let pretty_js_error = Self(js_error);
+    pretty_js_error.into()
   }
 }
 
-impl Deref for JSError {
-  type Target = deno_core::JSError;
+impl Deref for PrettyJsError {
+  type Target = JsError;
   fn deref(&self) -> &Self::Target {
     &self.0
   }
 }
 
-impl fmt::Display for JSError {
+impl fmt::Display for PrettyJsError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    let mut formatted_frames = self.0.formatted_frames.clone();
-
-    // The formatted_frames passed from prepareStackTrace() are colored.
-    if !colors::use_color() {
-      formatted_frames = formatted_frames
-        .iter()
-        .map(|s| colors::strip_ansi_codes(s).to_string())
-        .collect();
-    }
+    let mut frames = self.0.frames.clone();
 
     // When the stack frame array is empty, but the source location given by
     // (script_resource_name, line_number, start_column + 1) exists, this is
     // likely a syntax error. For the sake of formatting we treat it like it was
     // given as a single stack frame.
-    if formatted_frames.is_empty()
+    if frames.is_empty()
       && self.0.script_resource_name.is_some()
       && self.0.line_number.is_some()
       && self.0.start_column.is_some()
     {
-      formatted_frames = vec![format_location(
-        self.0.script_resource_name.as_ref().unwrap(),
-        self.0.line_number.unwrap(),
-        self.0.start_column.unwrap() + 1,
-      )]
-    };
+      frames = vec![JsStackFrame::from_location(
+        self.0.script_resource_name.clone(),
+        self.0.line_number,
+        self.0.start_column.map(|n| n + 1),
+      )];
+    }
 
     write!(
       f,
@@ -162,7 +233,7 @@ impl fmt::Display for JSError {
         self.0.source_line.as_deref(),
         self.0.start_column,
         self.0.end_column,
-        &formatted_frames,
+        &frames,
         0
       )
     )?;
@@ -170,7 +241,7 @@ impl fmt::Display for JSError {
   }
 }
 
-impl Error for JSError {}
+impl Error for PrettyJsError {}
 
 #[cfg(test)]
 mod tests {

@@ -1,16 +1,13 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
-import {
-  unitTest,
-  assertEquals,
-  assert,
-} from "./test_util.ts";
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
+import { assert, assertEquals, unitTest } from "./test_util.ts";
 
 // just a hack to get a body object
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// deno-lint-ignore no-explicit-any
 function buildBody(body: any, headers?: Headers): Body {
-  const stub = new Request("", {
+  const stub = new Request("http://foo/", {
     body: body,
     headers,
+    method: "POST",
   });
   return stub as Body;
 }

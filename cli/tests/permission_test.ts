@@ -1,6 +1,7 @@
 // Copyright 2018-2019 the Deno authors. All rights reserved. MIT license.
 const name = Deno.args[0];
-const test: { [key: string]: Function } = {
+// deno-lint-ignore no-explicit-any
+const test: { [key: string]: (...args: any[]) => void | Promise<void> } = {
   readRequired(): Promise<void> {
     Deno.readFileSync("README.md");
     return Promise.resolve();
@@ -15,13 +16,12 @@ const test: { [key: string]: Function } = {
     Deno.listen({ transport: "tcp", port: 4541 });
   },
   runRequired(): void {
-    Deno.run({
-      cmd: [
-        "python",
-        "-c",
-        "import sys; sys.stdout.write('hello'); sys.stdout.flush()",
-      ],
+    const p = Deno.run({
+      cmd: Deno.build.os === "windows"
+        ? ["cmd.exe", "/c", "echo hello"]
+        : ["printf", "hello"],
     });
+    p.close();
   },
 };
 

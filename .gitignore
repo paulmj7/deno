@@ -8,22 +8,28 @@
 gclient_config.py_entries
 /gh-pages/
 /target/
+/std/hash/_wasm/target
+/tools/wpt/manifest.json
 
 # Files that help ensure VSCode can work but we don't want checked into the
 # repo
 /node_modules
 /tsconfig.json
 
-# We use something stronger than lockfiles, we have all NPM modules stored in a
-# git. We do not download from NPM during build.
-# https://github.com/denoland/deno_third_party
-yarn.lock
-# yarn creates this in error.
-tools/node_modules/
-
 # compiled wasm files
 std/wasi/testdata/snapshot_preview1/
+
+# generated v8 coverage files
+cli/tests/.test_coverage/
 
 # MacOS generated files
 .DS_Store
 .DS_Store?
+
+# Flamegraphs
+/flamebench*.svg
+/flamegraph*.svg
+
+# WPT generated cert files
+/tools/wpt/certs/index.txt*
+/tools/wpt/certs/serial*

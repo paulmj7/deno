@@ -32,6 +32,7 @@ The executable name is inferred by default:
 - If the file stem is something generic like 'main', 'mod', 'index' or 'cli',
   and the path has no parent, take the file name of the parent path. Otherwise
   settle with the generic name.
+- If the resulting name has an '@...' suffix, strip it.
 
 To change the installation root, use `--root`:
 
@@ -61,12 +62,12 @@ deno install --allow-net --allow-read https://deno.land/std@$STD_VERSION/http/fi
 The above command creates an executable called `file_server` that runs with
 network and read permissions and binds to port 8080.
 
-For good practice, use the [`import.meta.main`](../examples/testing_if_main.md)
+For good practice, use the [`import.meta.main`](../examples/module_metadata.md)
 idiom to specify the entry point in an executable script.
 
 Example:
 
-<!-- dprint-ignore -->
+<!-- deno-fmt-ignore -->
 
 ```ts
 // https://example.com/awesome/cli.ts

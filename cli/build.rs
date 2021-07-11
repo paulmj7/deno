@@ -1,73 +1,225 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
-mod op_fetch_asset;
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
 
-use deno_core::js_check;
-use deno_core::CoreIsolate;
-use deno_core::StartupData;
+use deno_core::error::custom_error;
+use deno_core::op_sync;
+use deno_core::serde::Deserialize;
+use deno_core::serde_json;
+use deno_core::serde_json::json;
+use deno_core::serde_json::Value;
+use deno_core::JsRuntime;
+use deno_core::RuntimeOptions;
+use regex::Regex;
 use std::collections::HashMap;
 use std::env;
 use std::path::Path;
 use std::path::PathBuf;
 
+// TODO(bartlomieju): this module contains a lot of duplicated
+// logic with `runtime/build.rs`, factor out to `deno_core`.
 fn create_snapshot(
-  mut isolate: CoreIsolate,
+  mut js_runtime: JsRuntime,
   snapshot_path: &Path,
-  files: Vec<String>,
+  files: Vec<PathBuf>,
 ) {
+  // TODO(nayeemrmn): https://github.com/rust-lang/cargo/issues/3946 to get the
+  // workspace root.
+  let display_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
   for file in files {
-    println!("cargo:rerun-if-changed={}", file);
-    js_check(isolate.execute(&file, &std::fs::read_to_string(&file).unwrap()));
+    println!("cargo:rerun-if-changed={}", file.display());
+    let display_path = file.strip_prefix(display_root).unwrap();
+    let display_path_str = display_path.display().to_string();
+    js_runtime
+      .execute_script(
+        &("deno:".to_string() + &display_path_str.replace('\\', "/")),
+        &std::fs::read_to_string(&file).unwrap(),
+      )
+      .unwrap();
   }
 
-  let snapshot = isolate.snapshot();
+  let snapshot = js_runtime.snapshot();
   let snapshot_slice: &[u8] = &*snapshot;
   println!("Snapshot size: {}", snapshot_slice.len());
   std::fs::write(&snapshot_path, snapshot_slice).unwrap();
   println!("Snapshot written to: {} ", snapshot_path.display());
 }
 
-fn create_runtime_snapshot(snapshot_path: &Path, files: Vec<String>) {
-  let runtime_isolate = CoreIsolate::new(StartupData::None, true);
-  create_snapshot(runtime_isolate, snapshot_path, files);
+#[derive(Debug, Deserialize)]
+struct LoadArgs {
+  /// The fully qualified specifier that should be loaded.
+  specifier: String,
 }
 
 fn create_compiler_snapshot(
   snapshot_path: &Path,
-  files: Vec<String>,
+  files: Vec<PathBuf>,
   cwd: &Path,
 ) {
-  let mut runtime_isolate = CoreIsolate::new(StartupData::None, true);
-  let mut custom_libs: HashMap<String, PathBuf> = HashMap::new();
-  let web_scripts = deno_web::get_scripts();
-  custom_libs.insert(
-    "lib.deno.web.d.ts".to_string(),
-    PathBuf::from(web_scripts.declaration),
+  // libs that are being provided by op crates.
+  let mut op_crate_libs = HashMap::new();
+  op_crate_libs.insert("deno.console", deno_console::get_declaration());
+  op_crate_libs.insert("deno.url", deno_url::get_declaration());
+  op_crate_libs.insert("deno.web", deno_web::get_declaration());
+  op_crate_libs.insert("deno.fetch", deno_fetch::get_declaration());
+  op_crate_libs.insert("deno.webgpu", deno_webgpu::get_declaration());
+  op_crate_libs.insert("deno.websocket", deno_websocket::get_declaration());
+  op_crate_libs.insert("deno.webstorage", deno_webstorage::get_declaration());
+  op_crate_libs.insert("deno.crypto", deno_crypto::get_declaration());
+  op_crate_libs.insert(
+    "deno.broadcast_channel",
+    deno_broadcast_channel::get_declaration(),
   );
-  custom_libs.insert(
-    "lib.deno.window.d.ts".to_string(),
-    cwd.join("dts/lib.deno.window.d.ts"),
+  op_crate_libs.insert("deno.net", deno_net::get_declaration());
+  op_crate_libs
+    .insert("deno.net_unstable", deno_net::get_unstable_declaration());
+
+  // ensure we invalidate the build properly.
+  for (_, path) in op_crate_libs.iter() {
+    println!("cargo:rerun-if-changed={}", path.display());
+  }
+
+  // libs that should be loaded into the isolate before snapshotting.
+  let libs = vec![
+    // Deno custom type libraries
+    "deno.window",
+    "deno.worker",
+    "deno.shared_globals",
+    "deno.ns",
+    "deno.unstable",
+    // Deno built-in type libraries
+    "es5",
+    "es2015.collection",
+    "es2015.core",
+    "es2015",
+    "es2015.generator",
+    "es2015.iterable",
+    "es2015.promise",
+    "es2015.proxy",
+    "es2015.reflect",
+    "es2015.symbol",
+    "es2015.symbol.wellknown",
+    "es2016.array.include",
+    "es2016",
+    "es2017",
+    "es2017.intl",
+    "es2017.object",
+    "es2017.sharedmemory",
+    "es2017.string",
+    "es2017.typedarrays",
+    "es2018.asyncgenerator",
+    "es2018.asynciterable",
+    "es2018",
+    "es2018.intl",
+    "es2018.promise",
+    "es2018.regexp",
+    "es2019.array",
+    "es2019",
+    "es2019.object",
+    "es2019.string",
+    "es2019.symbol",
+    "es2020.bigint",
+    "es2020",
+    "es2020.intl",
+    "es2020.promise",
+    "es2020.sharedmemory",
+    "es2020.string",
+    "es2020.symbol.wellknown",
+    "es2021",
+    "es2021.promise",
+    "es2021.string",
+    "es2021.weakref",
+    "esnext",
+    "esnext.intl",
+    "esnext.promise",
+    "esnext.string",
+    "esnext.weakref",
+  ];
+
+  let path_dts = cwd.join("dts");
+  // ensure we invalidate the build properly.
+  for name in libs.iter() {
+    println!(
+      "cargo:rerun-if-changed={}",
+      path_dts.join(format!("lib.{}.d.ts", name)).display()
+    );
+  }
+
+  // create a copy of the vector that includes any op crate libs to be passed
+  // to the JavaScript compiler to build into the snapshot
+  let mut build_libs = libs.clone();
+  for (op_lib, _) in op_crate_libs.iter() {
+    build_libs.push(op_lib.to_owned());
+  }
+
+  let re_asset = Regex::new(r"asset:/{3}lib\.(\S+)\.d\.ts").expect("bad regex");
+  let build_specifier = "asset:///bootstrap.ts";
+
+  let mut js_runtime = JsRuntime::new(RuntimeOptions {
+    will_snapshot: true,
+    ..Default::default()
+  });
+  js_runtime.register_op(
+    "op_build_info",
+    op_sync(move |_state, _args: Value, _: ()| {
+      Ok(json!({
+        "buildSpecifier": build_specifier,
+        "libs": build_libs,
+      }))
+    }),
   );
-  custom_libs.insert(
-    "lib.deno.worker.d.ts".to_string(),
-    cwd.join("dts/lib.deno.worker.d.ts"),
+  js_runtime.register_op(
+    "op_cwd",
+    op_sync(move |_state, _args: Value, _: ()| Ok(json!("cache:///"))),
   );
-  custom_libs.insert(
-    "lib.deno.shared_globals.d.ts".to_string(),
-    cwd.join("dts/lib.deno.shared_globals.d.ts"),
+  // using the same op that is used in `tsc.rs` for loading modules and reading
+  // files, but a slightly different implementation at build time.
+  js_runtime.register_op(
+    "op_load",
+    op_sync(move |_state, args, _: ()| {
+      let v: LoadArgs = serde_json::from_value(args)?;
+      // we need a basic file to send to tsc to warm it up.
+      if v.specifier == build_specifier {
+        Ok(json!({
+          "data": r#"console.log("hello deno!");"#,
+          "hash": "1",
+          // this corresponds to `ts.ScriptKind.TypeScript`
+          "scriptKind": 3
+        }))
+      // specifiers come across as `asset:///lib.{lib_name}.d.ts` and we need to
+      // parse out just the name so we can lookup the asset.
+      } else if let Some(caps) = re_asset.captures(&v.specifier) {
+        if let Some(lib) = caps.get(1).map(|m| m.as_str()) {
+          // if it comes from an op crate, we were supplied with the path to the
+          // file.
+          let path = if let Some(op_crate_lib) = op_crate_libs.get(lib) {
+            op_crate_lib.clone()
+          // otherwise we are will generate the path ourself
+          } else {
+            path_dts.join(format!("lib.{}.d.ts", lib))
+          };
+          let data = std::fs::read_to_string(path)?;
+          Ok(json!({
+            "data": data,
+            "hash": "1",
+            // this corresponds to `ts.ScriptKind.TypeScript`
+            "scriptKind": 3
+          }))
+        } else {
+          Err(custom_error(
+            "InvalidSpecifier",
+            format!("An invalid specifier was requested: {}", v.specifier),
+          ))
+        }
+      } else {
+        Err(custom_error(
+          "InvalidSpecifier",
+          format!("An invalid specifier was requested: {}", v.specifier),
+        ))
+      }
+    }),
   );
-  custom_libs.insert(
-    "lib.deno.ns.d.ts".to_string(),
-    cwd.join("dts/lib.deno.ns.d.ts"),
-  );
-  custom_libs.insert(
-    "lib.deno.unstable.d.ts".to_string(),
-    cwd.join("dts/lib.deno.unstable.d.ts"),
-  );
-  runtime_isolate.register_op(
-    "op_fetch_asset",
-    op_fetch_asset::op_fetch_asset(custom_libs),
-  );
-  create_snapshot(runtime_isolate, snapshot_path, files);
+  js_runtime.sync_ops_cache();
+
+  create_snapshot(js_runtime, snapshot_path, files);
 }
 
 fn ts_version() -> String {
@@ -84,9 +236,31 @@ fn ts_version() -> String {
     .collect::<String>()
 }
 
+fn git_commit_hash() -> String {
+  if let Ok(output) = std::process::Command::new("git")
+    .arg("rev-list")
+    .arg("-1")
+    .arg("HEAD")
+    .output()
+  {
+    if output.status.success() {
+      std::str::from_utf8(&output.stdout[..40])
+        .unwrap()
+        .to_string()
+    } else {
+      // When not in git repository
+      // (e.g. when the user install by `cargo install deno`)
+      "UNKNOWN".to_string()
+    }
+  } else {
+    // When there is no git command for some reason
+    "UNKNOWN".to_string()
+  }
+}
+
 fn main() {
-  // Don't build V8 if "cargo doc" is being run. This is to support docs.rs.
-  if env::var_os("RUSTDOCFLAGS").is_some() {
+  // Skip building from docs.rs.
+  if env::var_os("DOCS_RS").is_some() {
     return;
   }
 
@@ -94,25 +268,63 @@ fn main() {
   // op_fetch_asset::trace_serializer();
 
   println!("cargo:rustc-env=TS_VERSION={}", ts_version());
+  println!("cargo:rustc-env=GIT_COMMIT_HASH={}", git_commit_hash());
+  println!(
+    "cargo:rustc-env=DENO_CONSOLE_LIB_PATH={}",
+    deno_console::get_declaration().display()
+  );
+  println!(
+    "cargo:rustc-env=DENO_URL_LIB_PATH={}",
+    deno_url::get_declaration().display()
+  );
   println!(
     "cargo:rustc-env=DENO_WEB_LIB_PATH={}",
-    deno_web::get_scripts().declaration
+    deno_web::get_declaration().display()
+  );
+  println!(
+    "cargo:rustc-env=DENO_FETCH_LIB_PATH={}",
+    deno_fetch::get_declaration().display()
+  );
+  println!(
+    "cargo:rustc-env=DENO_WEBGPU_LIB_PATH={}",
+    deno_webgpu::get_declaration().display()
+  );
+  println!(
+    "cargo:rustc-env=DENO_WEBSOCKET_LIB_PATH={}",
+    deno_websocket::get_declaration().display()
+  );
+  println!(
+    "cargo:rustc-env=DENO_WEBSTORAGE_LIB_PATH={}",
+    deno_webstorage::get_declaration().display()
+  );
+  println!(
+    "cargo:rustc-env=DENO_CRYPTO_LIB_PATH={}",
+    deno_crypto::get_declaration().display()
+  );
+  println!(
+    "cargo:rustc-env=DENO_BROADCAST_CHANNEL_LIB_PATH={}",
+    deno_broadcast_channel::get_declaration().display()
+  );
+  println!(
+    "cargo:rustc-env=DENO_NET_LIB_PATH={}",
+    deno_net::get_declaration().display()
+  );
+  println!(
+    "cargo:rustc-env=DENO_NET_UNSTABLE_LIB_PATH={}",
+    deno_net::get_unstable_declaration().display()
   );
 
-  println!(
-    "cargo:rustc-env=TARGET={}",
-    std::env::var("TARGET").unwrap()
-  );
+  println!("cargo:rustc-env=TARGET={}", env::var("TARGET").unwrap());
+  println!("cargo:rustc-env=PROFILE={}", env::var("PROFILE").unwrap());
+  if let Ok(c) = env::var("DENO_CANARY") {
+    println!("cargo:rustc-env=DENO_CANARY={}", c);
+  }
 
   let c = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
   let o = PathBuf::from(env::var_os("OUT_DIR").unwrap());
 
   // Main snapshot
-  let runtime_snapshot_path = o.join("CLI_SNAPSHOT.bin");
   let compiler_snapshot_path = o.join("COMPILER_SNAPSHOT.bin");
-
-  let js_files = get_js_files_for_rt();
-  create_runtime_snapshot(&runtime_snapshot_path, js_files);
 
   let js_files = get_js_files("tsc");
   create_compiler_snapshot(&compiler_snapshot_path, js_files, &c);
@@ -129,80 +341,16 @@ fn main() {
   }
 }
 
-fn get_js_files(d: &str) -> Vec<String> {
+fn get_js_files(d: &str) -> Vec<PathBuf> {
+  let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
   let mut js_files = std::fs::read_dir(d)
     .unwrap()
     .map(|dir_entry| {
       let file = dir_entry.unwrap();
-      file.path().to_string_lossy().to_string()
+      manifest_dir.join(file.path())
     })
-    .filter(|filename| filename.ends_with(".js"))
-    .collect::<Vec<String>>();
+    .filter(|path| path.extension().unwrap_or_default() == "js")
+    .collect::<Vec<PathBuf>>();
   js_files.sort();
   js_files
-}
-
-fn get_js_files_for_rt() -> Vec<String> {
-  let web_scripts = deno_web::get_scripts();
-
-  let f = vec![
-    "rt/00_bootstrap_namespace.js",
-    &web_scripts.dom_exception,
-    "rt/01_build.js",
-    "rt/01_colors.js",
-    "rt/01_errors.js",
-    &web_scripts.event,
-    "rt/01_internals.js",
-    "rt/01_version.js",
-    "rt/01_web_util.js",
-    &web_scripts.abort_signal,
-    "rt/02_console.js",
-    "rt/03_dom_iterable.js",
-    "rt/06_util.js",
-    &web_scripts.text_encoding,
-    "rt/10_dispatch_json.js",
-    "rt/10_dispatch_minimal.js",
-    "rt/11_crypto.js",
-    "rt/11_resources.js",
-    "rt/11_streams.js",
-    "rt/11_timers.js",
-    "rt/11_url.js",
-    "rt/11_workers.js",
-    "rt/12_io.js",
-    "rt/13_buffer.js",
-    "rt/20_blob.js",
-    "rt/20_headers.js",
-    "rt/20_streams_queuing_strategy.js",
-    "rt/21_dom_file.js",
-    "rt/21_filereader.js",
-    "rt/22_form_data.js",
-    "rt/23_multipart.js",
-    "rt/24_body.js",
-    "rt/25_request.js",
-    "rt/26_fetch.js",
-    "rt/30_files.js",
-    "rt/30_fs.js",
-    "rt/30_metrics.js",
-    "rt/30_net.js",
-    "rt/30_os.js",
-    "rt/40_compiler_api.js",
-    "rt/40_diagnostics.js",
-    "rt/40_error_stack.js",
-    "rt/40_fs_events.js",
-    "rt/40_net_unstable.js",
-    "rt/40_performance.js",
-    "rt/40_permissions.js",
-    "rt/40_plugins.js",
-    "rt/40_process.js",
-    "rt/40_read_file.js",
-    "rt/40_repl.js",
-    "rt/40_signals.js",
-    "rt/40_testing.js",
-    "rt/40_tls.js",
-    "rt/40_tty.js",
-    "rt/40_write_file.js",
-    "rt/90_deno_ns.js",
-    "rt/99_main.js",
-  ];
-  f.iter().map(|p| p.to_string()).collect()
 }

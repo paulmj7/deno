@@ -1,4 +1,4 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
 import {
   assert,
   assertEquals,
@@ -25,6 +25,21 @@ unitTest({ perms: { env: true } }, function deleteEnv(): void {
   assertEquals(Deno.env.get("TEST_VAR"), "A");
   assertEquals(Deno.env.delete("TEST_VAR"), undefined);
   assertEquals(Deno.env.get("TEST_VAR"), undefined);
+});
+
+unitTest({ perms: { env: true } }, function avoidEmptyNamedEnv(): void {
+  assertThrows(() => Deno.env.set("", "v"), TypeError);
+  assertThrows(() => Deno.env.set("a=a", "v"), TypeError);
+  assertThrows(() => Deno.env.set("a\0a", "v"), TypeError);
+  assertThrows(() => Deno.env.set("TEST_VAR", "v\0v"), TypeError);
+
+  assertThrows(() => Deno.env.get(""), TypeError);
+  assertThrows(() => Deno.env.get("a=a"), TypeError);
+  assertThrows(() => Deno.env.get("a\0a"), TypeError);
+
+  assertThrows(() => Deno.env.delete(""), TypeError);
+  assertThrows(() => Deno.env.delete("a=a"), TypeError);
+  assertThrows(() => Deno.env.delete("a\0a"), TypeError);
 });
 
 unitTest(function envPermissionDenied1(): void {
@@ -62,7 +77,7 @@ unitTest(
       )`;
       const proc = Deno.run({
         cmd: [Deno.execPath(), "eval", src],
-        env: inputEnv,
+        env: { ...inputEnv, NO_COLOR: "1" },
         stdout: "piped",
       });
       const status = await proc.status();
@@ -143,7 +158,7 @@ unitTest({ perms: { read: false } }, function execPathPerm(): void {
       Deno.execPath();
     },
     Deno.errors.PermissionDenied,
-    "read access to <exec_path>, run again with the --allow-read flag",
+    "Requires read access to <exec_path>, run again with the --allow-read flag",
   );
 });
 
@@ -176,4 +191,21 @@ unitTest({ perms: { env: false } }, function releasePerm(): void {
   assertThrows(() => {
     Deno.osRelease();
   }, Deno.errors.PermissionDenied);
+});
+
+unitTest({ perms: { env: true } }, function systemMemoryInfo(): void {
+  const info = Deno.systemMemoryInfo();
+  assert(info.total >= 0);
+  assert(info.free >= 0);
+  assert(info.available >= 0);
+  assert(info.buffers >= 0);
+  assert(info.cached >= 0);
+  assert(info.swapTotal >= 0);
+  assert(info.swapFree >= 0);
+});
+
+unitTest({ perms: { env: true } }, function systemCpuInfo(): void {
+  const { cores, speed } = Deno.systemCpuInfo();
+  assert(cores === undefined || cores > 0);
+  assert(speed === undefined || speed > 0);
 });

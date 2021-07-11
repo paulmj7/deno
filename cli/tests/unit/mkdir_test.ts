@@ -1,10 +1,11 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
 import {
-  unitTest,
   assert,
   assertEquals,
   assertThrows,
   assertThrowsAsync,
+  pathToAbsoluteFileUrl,
+  unitTest,
 } from "./test_util.ts";
 
 function assertDirectory(path: string, mode?: number): void {
@@ -195,5 +196,35 @@ unitTest(
         Deno.mkdirSync(danglingLink, { recursive: true });
       }, Deno.errors.AlreadyExists);
     }
+  },
+);
+
+unitTest(
+  { perms: { read: true, write: true } },
+  function mkdirSyncRelativeUrlPath(): void {
+    const testDir = Deno.makeTempDirSync();
+    const nestedDir = testDir + "/nested";
+    // Add trailing slash so base path is treated as a directory. pathToAbsoluteFileUrl removes trailing slashes.
+    const path = new URL("../dir", pathToAbsoluteFileUrl(nestedDir) + "/");
+
+    Deno.mkdirSync(nestedDir);
+    Deno.mkdirSync(path);
+
+    assertDirectory(testDir + "/dir");
+  },
+);
+
+unitTest(
+  { perms: { read: true, write: true } },
+  async function mkdirRelativeUrlPath(): Promise<void> {
+    const testDir = Deno.makeTempDirSync();
+    const nestedDir = testDir + "/nested";
+    // Add trailing slash so base path is treated as a directory. pathToAbsoluteFileUrl removes trailing slashes.
+    const path = new URL("../dir", pathToAbsoluteFileUrl(nestedDir) + "/");
+
+    await Deno.mkdir(nestedDir);
+    await Deno.mkdir(path);
+
+    assertDirectory(testDir + "/dir");
   },
 );

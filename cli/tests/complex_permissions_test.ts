@@ -1,6 +1,7 @@
 // Copyright 2018-2019 the Deno authors. All rights reserved. MIT license.
 const name = Deno.args[0];
-const test: { [key: string]: Function } = {
+// deno-lint-ignore no-explicit-any
+const test: { [key: string]: (...args: any[]) => void | Promise<void> } = {
   read(files: string[]): void {
     files.forEach((file) => Deno.readFileSync(file));
   },
@@ -9,8 +10,8 @@ const test: { [key: string]: Function } = {
       Deno.writeFileSync(file, new Uint8Array(0), { append: true })
     );
   },
-  netFetch(hosts: string[]): void {
-    hosts.forEach((host) => fetch(host));
+  netFetch(urls: string[]): void {
+    urls.forEach((url) => fetch(url));
   },
   netListen(endpoints: string[]): void {
     endpoints.forEach((endpoint) => {

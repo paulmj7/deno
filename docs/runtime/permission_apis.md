@@ -1,8 +1,5 @@
 ## Permission APIs
 
-> This API is unstable. Learn more about
-> [unstable features](../runtime/stability.md).
-
 Permissions are granted from the CLI when running the `deno` command. User code
 will often assume its own set of required permissions, but there is no guarantee
 during execution that the set of _granted_ permissions will align with this.
@@ -16,26 +13,26 @@ On the CLI, read permission for `/foo/bar` is represented as
 `--allow-read=/foo/bar`. In runtime JS, it is represented as the following:
 
 ```ts
-const desc = { name: "read", path: "/foo/bar" };
+const desc = { name: "read", path: "/foo/bar" } as const;
 ```
 
 Other examples:
 
 ```ts
 // Global write permission.
-const desc1 = { name: "write" };
+const desc1 = { name: "write" } as const;
 
 // Write permission to `$PWD/foo/bar`.
-const desc2 = { name: "write", path: "foo/bar" };
+const desc2 = { name: "write", path: "foo/bar" } as const;
 
 // Global net permission.
-const desc3 = { name: "net" };
+const desc3 = { name: "net" } as const;
 
 // Net permission to 127.0.0.1:8000.
-const desc4 = { name: "net", url: "127.0.0.1:8000" };
+const desc4 = { name: "net", host: "127.0.0.1:8000" } as const;
 
 // High-resolution time permission.
-const desc5 = { name: "hrtime" };
+const desc5 = { name: "hrtime" } as const;
 ```
 
 ### Query permissions
@@ -43,17 +40,17 @@ const desc5 = { name: "hrtime" };
 Check, by descriptor, if a permission is granted or not.
 
 ```ts
-// deno run --unstable --allow-read=/foo main.ts
+// deno run --allow-read=/foo main.ts
 
-const desc1 = { name: "read", path: "/foo" };
+const desc1 = { name: "read", path: "/foo" } as const;
 console.log(await Deno.permissions.query(desc1));
 // PermissionStatus { state: "granted" }
 
-const desc2 = { name: "read", path: "/foo/bar" };
+const desc2 = { name: "read", path: "/foo/bar" } as const;
 console.log(await Deno.permissions.query(desc2));
 // PermissionStatus { state: "granted" }
 
-const desc3 = { name: "read", path: "/bar" };
+const desc3 = { name: "read", path: "/bar" } as const;
 console.log(await Deno.permissions.query(desc3));
 // PermissionStatus { state: "prompt" }
 ```
@@ -82,13 +79,13 @@ _[stronger than](https://www.w3.org/TR/permissions/#ref-for-permissiondescriptor
 More examples:
 
 ```ts
-const desc1 = { name: "write" };
+const desc1 = { name: "write" } as const;
 // is stronger than
-const desc2 = { name: "write", path: "/foo" };
+const desc2 = { name: "write", path: "/foo" } as const;
 
-const desc3 = { name: "net" };
+const desc3 = { name: "net", host: "127.0.0.1" } as const;
 // is stronger than
-const desc4 = { name: "net", url: "127.0.0.1:8000" };
+const desc4 = { name: "net", host: "127.0.0.1:8000" } as const;
 ```
 
 ### Request permissions
@@ -96,15 +93,15 @@ const desc4 = { name: "net", url: "127.0.0.1:8000" };
 Request an ungranted permission from the user via CLI prompt.
 
 ```ts
-// deno run --unstable main.ts
+// deno run main.ts
 
-const desc1 = { name: "read", path: "/foo" };
+const desc1 = { name: "read", path: "/foo" } as const;
 const status1 = await Deno.permissions.request(desc1);
 // ⚠️ Deno requests read access to "/foo". Grant? [g/d (g = grant, d = deny)] g
 console.log(status1);
 // PermissionStatus { state: "granted" }
 
-const desc2 = { name: "read", path: "/bar" };
+const desc2 = { name: "read", path: "/bar" } as const;
 const status2 = await Deno.permissions.request(desc2);
 // ⚠️ Deno requests read access to "/bar". Grant? [g/d (g = grant, d = deny)] d
 console.log(status2);
@@ -127,9 +124,9 @@ requests.
 Downgrade a permission from "granted" to "prompt".
 
 ```ts
-// deno run --unstable --allow-read=/foo main.ts
+// deno run --allow-read=/foo main.ts
 
-const desc = { name: "read", path: "/foo" };
+const desc = { name: "read", path: "/foo" } as const;
 console.log(await Deno.permissions.revoke(desc));
 // PermissionStatus { state: "prompt" }
 ```
@@ -138,9 +135,9 @@ However, what happens when you try to revoke a permission which is _partial_ to
 one granted on the CLI?
 
 ```ts
-// deno run --unstable --allow-read=/foo main.ts
+// deno run --allow-read=/foo main.ts
 
-const desc = { name: "read", path: "/foo/bar" };
+const desc = { name: "read", path: "/foo/bar" } as const;
 console.log(await Deno.permissions.revoke(desc));
 // PermissionStatus { state: "granted" }
 ```
@@ -175,13 +172,13 @@ set which the argument permission descriptor is _stronger than_. So to ensure
 whichever _explicitly granted permission descriptor_ is _stronger than_ `desc`.
 
 ```ts
-// deno run --unstable --allow-read=/foo main.ts
+// deno run --allow-read=/foo main.ts
 
-const desc = { name: "read", path: "/foo/bar" };
+const desc = { name: "read", path: "/foo/bar" } as const;
 console.log(await Deno.permissions.revoke(desc)); // Insufficient.
 // PermissionStatus { state: "granted" }
 
-const strongDesc = { name: "read", path: "/foo" };
+const strongDesc = { name: "read", path: "/foo" } as const;
 await Deno.permissions.revoke(strongDesc); // Good.
 
 console.log(await Deno.permissions.query(desc));

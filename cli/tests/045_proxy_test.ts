@@ -1,6 +1,6 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
-import { serve, ServerRequest } from "../../std/http/server.ts";
-import { assertEquals } from "../../std/testing/asserts.ts";
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
+import { serve, ServerRequest } from "../../test_util/std/http/server.ts";
+import { assertEquals } from "../../test_util/std/testing/asserts.ts";
 
 const addr = Deno.args[1] || "127.0.0.1:4555";
 
@@ -15,6 +15,11 @@ async function proxyServer(): Promise<void> {
 
 async function proxyRequest(req: ServerRequest): Promise<void> {
   console.log(`Proxy request to: ${req.url}`);
+  const proxyAuthorization = req.headers.get("proxy-authorization");
+  if (proxyAuthorization) {
+    console.log(`proxy-authorization: ${proxyAuthorization}`);
+    req.headers.delete("proxy-authorization");
+  }
   const resp = await fetch(req.url, {
     method: req.method,
     headers: req.headers,
@@ -54,7 +59,7 @@ async function testModuleDownload(): Promise<void> {
       "cache",
       "--reload",
       "--quiet",
-      "http://localhost:4545/std/examples/colors.ts",
+      "http://localhost:4545/test_util/std/examples/colors.ts",
     ],
     stdout: "piped",
     env: {
@@ -96,7 +101,7 @@ async function testModuleDownloadNoProxy(): Promise<void> {
       "cache",
       "--reload",
       "--quiet",
-      "http://localhost:4545/std/examples/colors.ts",
+      "http://localhost:4545/test_util/std/examples/colors.ts",
     ],
     stdout: "piped",
     env: {
@@ -110,9 +115,28 @@ async function testModuleDownloadNoProxy(): Promise<void> {
   http.close();
 }
 
+async function testFetchProgrammaticProxy(): Promise<void> {
+  const c = Deno.run({
+    cmd: [
+      Deno.execPath(),
+      "run",
+      "--quiet",
+      "--reload",
+      "--allow-net=localhost:4545,localhost:4555",
+      "--unstable",
+      "045_programmatic_proxy_client.ts",
+    ],
+    stdout: "piped",
+  });
+  const status = await c.status();
+  assertEquals(status.code, 0);
+  c.close();
+}
+
 proxyServer();
 await testFetch();
 await testModuleDownload();
 await testFetchNoProxy();
 await testModuleDownloadNoProxy();
+await testFetchProgrammaticProxy();
 Deno.exit(0);

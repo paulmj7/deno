@@ -1,7 +1,7 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
-import { unitTest, assert, assertEquals } from "./test_util.ts";
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
+import { assert, assertEquals, unitTest } from "./test_util.ts";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// deno-lint-ignore no-explicit-any
 function testFirstArgument(arg1: any[], expectedSize: number): void {
   const file = new File(arg1, "name");
   assert(file instanceof File);
@@ -77,7 +77,7 @@ unitTest(function fileObjectInFileBits(): void {
   testFirstArgument([{}], 15);
 });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// deno-lint-ignore no-explicit-any
 function testSecondArgument(arg2: any, expectedFileName: string): void {
   const file = new File(["bits"], arg2);
   assert(file instanceof File);
@@ -86,10 +86,6 @@ function testSecondArgument(arg2: any, expectedFileName: string): void {
 
 unitTest(function fileUsingFileName(): void {
   testSecondArgument("dummy", "dummy");
-});
-
-unitTest(function fileUsingSpecialCharacterInFileName(): void {
-  testSecondArgument("dummy/foo", "dummy:foo");
 });
 
 unitTest(function fileUsingNullFileName(): void {
@@ -102,4 +98,80 @@ unitTest(function fileUsingNumberFileName(): void {
 
 unitTest(function fileUsingEmptyStringFileName(): void {
   testSecondArgument("", "");
+});
+
+unitTest(
+  { perms: { read: true, write: true } },
+  function fileTruncateSyncSuccess(): void {
+    const filename = Deno.makeTempDirSync() + "/test_fileTruncateSync.txt";
+    const file = Deno.openSync(filename, {
+      create: true,
+      read: true,
+      write: true,
+    });
+
+    file.truncateSync(20);
+    assertEquals(Deno.readFileSync(filename).byteLength, 20);
+    file.truncateSync(5);
+    assertEquals(Deno.readFileSync(filename).byteLength, 5);
+    file.truncateSync(-5);
+    assertEquals(Deno.readFileSync(filename).byteLength, 0);
+
+    file.close();
+    Deno.removeSync(filename);
+  },
+);
+
+unitTest(
+  { perms: { read: true, write: true } },
+  async function fileTruncateSuccess(): Promise<void> {
+    const filename = Deno.makeTempDirSync() + "/test_fileTruncate.txt";
+    const file = await Deno.open(filename, {
+      create: true,
+      read: true,
+      write: true,
+    });
+
+    await file.truncate(20);
+    assertEquals((await Deno.readFile(filename)).byteLength, 20);
+    await file.truncate(5);
+    assertEquals((await Deno.readFile(filename)).byteLength, 5);
+    await file.truncate(-5);
+    assertEquals((await Deno.readFile(filename)).byteLength, 0);
+
+    file.close();
+    await Deno.remove(filename);
+  },
+);
+
+unitTest({ perms: { read: true } }, function fileStatSyncSuccess(): void {
+  const file = Deno.openSync("README.md");
+  const fileInfo = file.statSync();
+  assert(fileInfo.isFile);
+  assert(!fileInfo.isSymlink);
+  assert(!fileInfo.isDirectory);
+  assert(fileInfo.size);
+  assert(fileInfo.atime);
+  assert(fileInfo.mtime);
+  // The `birthtime` field is not available on Linux before kernel version 4.11.
+  assert(fileInfo.birthtime || Deno.build.os === "linux");
+
+  file.close();
+});
+
+unitTest({ perms: { read: true } }, async function fileStatSuccess(): Promise<
+  void
+> {
+  const file = await Deno.open("README.md");
+  const fileInfo = await file.stat();
+  assert(fileInfo.isFile);
+  assert(!fileInfo.isSymlink);
+  assert(!fileInfo.isDirectory);
+  assert(fileInfo.size);
+  assert(fileInfo.atime);
+  assert(fileInfo.mtime);
+  // The `birthtime` field is not available on Linux before kernel version 4.11.
+  assert(fileInfo.birthtime || Deno.build.os === "linux");
+
+  file.close();
 });

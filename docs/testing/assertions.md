@@ -12,15 +12,18 @@ Deno.test("Hello Test", () => {
 });
 ```
 
-The assertions module provides nine assertions:
+The assertions module provides 10 assertions:
 
 - `assert(expr: unknown, msg = ""): asserts expr`
 - `assertEquals(actual: unknown, expected: unknown, msg?: string): void`
+- `assertExists(actual: unknown,msg?: string): void`
 - `assertNotEquals(actual: unknown, expected: unknown, msg?: string): void`
 - `assertStrictEquals(actual: unknown, expected: unknown, msg?: string): void`
-- `assertStringContains(actual: string, expected: string, msg?: string): void`
-- `assertArrayContains(actual: unknown[], expected: unknown[], msg?: string): void`
+- `assertStringIncludes(actual: string, expected: string, msg?: string): void`
+- `assertArrayIncludes(actual: unknown[], expected: unknown[], msg?: string): void`
 - `assertMatch(actual: string, expected: RegExp, msg?: string): void`
+- `assertNotMatch(actual: string, expected: RegExp, msg?: string): void`
+- `assertObjectMatch( actual: Record<PropertyKey, unknown>, expected: Record<PropertyKey, unknown>): void`
 - `assertThrows(fn: () => void, ErrorClass?: Constructor, msgIncludes = "", msg?: string): Error`
 - `assertThrowsAsync(fn: () => Promise<void>, ErrorClass?: Constructor, msgIncludes = "", msg?: string): Promise<Error>`
 
@@ -34,6 +37,19 @@ Deno.test("Test Assert", () => {
   assert(1);
   assert("Hello");
   assert(true);
+});
+```
+
+### Exists
+
+The `assertExists` can be used to check if a value is not `null` or `undefined`.
+
+```js
+assertExists("Denosaurus");
+Deno.test("Test Assert Exists", () => {
+  assertExists("Denosaurus");
+  assertExists(false);
+  assertExists(0);
 });
 ```
 
@@ -91,31 +107,32 @@ precise check against two primitive types.
 ### Contains
 
 There are two methods available to assert a value contains a value,
-`assertStringContains()` and `assertArrayContains()`.
+`assertStringIncludes()` and `assertArrayIncludes()`.
 
-The `assertStringContains()` assertion does a simple includes check on a string
+The `assertStringIncludes()` assertion does a simple includes check on a string
 to see if it contains the expected string.
 
 ```js
 Deno.test("Test Assert String Contains", () => {
-  assertStringContains("Hello World", "Hello");
+  assertStringIncludes("Hello World", "Hello");
 });
 ```
 
-The `assertArrayContains()` assertion is slightly more advanced and can find
+The `assertArrayIncludes()` assertion is slightly more advanced and can find
 both a value within an array and an array of values within an array.
 
 ```js
 Deno.test("Test Assert Array Contains", () => {
-  assertArrayContains([1, 2, 3], [1]);
-  assertArrayContains([1, 2, 3], [1, 2]);
-  assertArrayContains(Array.from("Hello World"), Array.from("Hello"));
+  assertArrayIncludes([1, 2, 3], [1]);
+  assertArrayIncludes([1, 2, 3], [1, 2]);
+  assertArrayIncludes(Array.from("Hello World"), Array.from("Hello"));
 });
 ```
 
 ### Regex
 
-You can assert regular expressions via the `assertMatch()` assertion.
+You can assert regular expressions via `assertMatch()` and `assertNotMatch()`
+assertions.
 
 ```js
 Deno.test("Test Assert Match", () => {
@@ -125,18 +142,40 @@ Deno.test("Test Assert Match", () => {
   assertMatch("https://www.google.com", basicUrl);
   assertMatch("http://facebook.com", basicUrl);
 });
+
+Deno.test("Test Assert Not Match", () => {
+  assertNotMatch("abcdefghi", new RegExp("jkl"));
+
+  const basicUrl = new RegExp("^https?://[a-z.]+.com$");
+  assertNotMatch("https://deno.land/", basicUrl);
+});
+```
+
+### Object
+
+Use `assertObjectMatch` to check that a JavaScript object matches a subset of
+the properties of an object.
+
+```js
+// Simple subset
+assertObjectMatch(
+  { foo: true, bar: false },
+  {
+    foo: true,
+  },
+);
 ```
 
 ### Throws
 
 There are two ways to assert whether something throws an error in Deno,
-`assertThrows()` and `assertAsyncThrows()`. Both assertions allow you to check
+`assertThrows()` and `assertThrowsAsync()`. Both assertions allow you to check
 an
 [Error](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error)
 has been thrown, the type of error thrown and what the message was.
 
 The difference between the two assertions is `assertThrows()` accepts a standard
-function and `assertAsyncThrows()` accepts a function which returns a
+function and `assertThrowsAsync()` accepts a function which returns a
 [Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise).
 
 The `assertThrows()` assertion will check an error has been thrown, and
@@ -155,7 +194,7 @@ Deno.test("Test Assert Throws", () => {
 });
 ```
 
-The `assertAsyncThrows()` assertion is a little more complicated, mainly because
+The `assertThrowsAsync()` assertion is a little more complicated, mainly because
 it deals with Promises. But basically it will catch thrown errors or rejections
 in Promises. You can also optionally check for the error type and error message.
 
@@ -190,5 +229,35 @@ rather than the standard CLI error message.
 ```js
 Deno.test("Test Assert Equal Fail Custom Message", () => {
   assertEquals(1, 2, "Values Don't Match!");
+});
+```
+
+### Custom Tests
+
+While Deno comes with powerful
+[assertions modules](https://deno.land/std@$STD_VERSION/testing/asserts.ts) but
+there is always something specific to the project you can add. Creating
+`custom assertion function` can improve readability and reduce the amount of
+code.
+
+```js
+function assertPowerOf(actual: number, expected: number, msg?: string): void {
+  let received = actual;
+  while (received % expected === 0) received = received / expected;
+  if (received !== 1) {
+    if (!msg) {
+      msg = `actual: "${actual}" expected to be a power of : "${expected}"`;
+    }
+    throw new AssertionError(msg);
+  }
+}
+```
+
+Use this matcher in your code like this:
+
+```js
+Deno.test("Test Assert PowerOf", () => {
+  assertPowerOf(8, 2);
+  assertPowerOf(11, 4);
 });
 ```

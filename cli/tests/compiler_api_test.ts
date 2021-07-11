@@ -1,225 +1,504 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
 import {
   assert,
   assertEquals,
+  assertStringIncludes,
   assertThrowsAsync,
-} from "../../std/testing/asserts.ts";
+} from "../../test_util/std/testing/asserts.ts";
 
 Deno.test({
-  name: "Deno.compile() - sources provided",
+  name: "Deno.emit() - sources provided",
   async fn() {
-    const [diagnostics, actual] = await Deno.compile("/foo.ts", {
-      "/foo.ts": `import * as bar from "./bar.ts";\n\nconsole.log(bar);\n`,
-      "/bar.ts": `export const bar = "bar";\n`,
-    });
-    assert(diagnostics == null);
-    assert(actual);
-    assertEquals(Object.keys(actual), [
-      "/bar.js.map",
-      "/bar.js",
-      "/foo.js.map",
-      "/foo.js",
-    ]);
+    const { diagnostics, files, ignoredOptions, stats } = await Deno.emit(
+      "/foo.ts",
+      {
+        sources: {
+          "/foo.ts": `import * as bar from "./bar.ts";\n\nconsole.log(bar);\n`,
+          "/bar.ts": `export const bar = "bar";\n`,
+        },
+      },
+    );
+    assertEquals(diagnostics.length, 0);
+    assert(!ignoredOptions);
+    assertEquals(stats.length, 12);
+    const keys = Object.keys(files).sort();
+    assert(keys[0].endsWith("/bar.ts.js"));
+    assert(keys[1].endsWith("/bar.ts.js.map"));
+    assert(keys[2].endsWith("/foo.ts.js"));
+    assert(keys[3].endsWith("/foo.ts.js.map"));
   },
 });
 
 Deno.test({
-  name: "Deno.compile() - no sources provided",
+  name: "Deno.emit() - no sources provided",
   async fn() {
-    const [diagnostics, actual] = await Deno.compile("./subdir/mod1.ts");
-    assert(diagnostics == null);
-    assert(actual);
-    const keys = Object.keys(actual);
+    const { diagnostics, files, ignoredOptions, stats } = await Deno.emit(
+      "./subdir/mod1.ts",
+    );
+    assertEquals(diagnostics.length, 0);
+    assert(!ignoredOptions);
+    assertEquals(stats.length, 12);
+    const keys = Object.keys(files).sort();
     assertEquals(keys.length, 6);
-    assert(keys[0].endsWith("print_hello.js.map"));
-    assert(keys[1].endsWith("print_hello.js"));
+    assert(keys[0].endsWith("cli/tests/subdir/mod1.ts.js"));
+    assert(keys[1].endsWith("cli/tests/subdir/mod1.ts.js.map"));
   },
 });
 
 Deno.test({
-  name: "Deno.compile() - compiler options effects emit",
+  name: "Deno.emit() - compiler options effects emit",
   async fn() {
-    const [diagnostics, actual] = await Deno.compile(
+    const { diagnostics, files, ignoredOptions, stats } = await Deno.emit(
       "/foo.ts",
       {
-        "/foo.ts": `export const foo = "foo";`,
-      },
-      {
-        module: "amd",
-        sourceMap: false,
+        compilerOptions: {
+          module: "amd",
+          sourceMap: false,
+        },
+        sources: { "/foo.ts": `export const foo = "foo";` },
       },
     );
-    assert(diagnostics == null);
-    assert(actual);
-    assertEquals(Object.keys(actual), ["/foo.js"]);
-    assert(actual["/foo.js"].startsWith("define("));
+    assertEquals(diagnostics.length, 0);
+    assert(!ignoredOptions);
+    assertEquals(stats.length, 12);
+    const keys = Object.keys(files);
+    assertEquals(keys.length, 1);
+    const key = keys[0];
+    assert(key.endsWith("/foo.ts.js"));
+    assert(files[key].startsWith("define("));
   },
 });
 
 Deno.test({
-  name: "Deno.compile() - pass lib in compiler options",
+  name: "Deno.emit() - pass lib in compiler options",
   async fn() {
-    const [diagnostics, actual] = await Deno.compile(
+    const { diagnostics, files, ignoredOptions, stats } = await Deno.emit(
+      "file:///foo.ts",
+      {
+        compilerOptions: {
+          lib: ["dom", "es2018", "deno.ns"],
+        },
+        sources: {
+          "file:///foo.ts": `console.log(document.getElementById("foo"));
+          console.log(Deno.args);`,
+        },
+      },
+    );
+    assertEquals(diagnostics.length, 0);
+    assert(!ignoredOptions);
+    assertEquals(stats.length, 12);
+    const keys = Object.keys(files).sort();
+    assertEquals(keys, ["file:///foo.ts.js", "file:///foo.ts.js.map"]);
+  },
+});
+
+Deno.test({
+  name: "Deno.emit() - type references can be loaded",
+  async fn() {
+    const { diagnostics, files, ignoredOptions, stats } = await Deno.emit(
+      "file:///a.ts",
+      {
+        sources: {
+          "file:///a.ts": `/// <reference types="./b.d.ts" />
+          const b = new B();
+          console.log(b.b);`,
+          "file:///b.d.ts": `declare class B {
+            b: string;
+          }`,
+        },
+      },
+    );
+    assertEquals(diagnostics.length, 0);
+    assert(!ignoredOptions);
+    assertEquals(stats.length, 12);
+    const keys = Object.keys(files).sort();
+    assertEquals(keys, ["file:///a.ts.js", "file:///a.ts.js.map"]);
+  },
+});
+
+Deno.test({
+  name: "Deno.emit() - compilerOptions.types",
+  async fn() {
+    const { diagnostics, files, ignoredOptions, stats } = await Deno.emit(
+      "file:///a.ts",
+      {
+        compilerOptions: {
+          types: ["file:///b.d.ts"],
+        },
+        sources: {
+          "file:///a.ts": `const b = new B();
+          console.log(b.b);`,
+          "file:///b.d.ts": `declare class B {
+            b: string;
+          }`,
+        },
+      },
+    );
+    assertEquals(diagnostics.length, 0);
+    assert(!ignoredOptions);
+    assertEquals(stats.length, 12);
+    const keys = Object.keys(files).sort();
+    assertEquals(keys, ["file:///a.ts.js", "file:///a.ts.js.map"]);
+  },
+});
+
+Deno.test({
+  name: "Deno.emit() - import maps",
+  async fn() {
+    const { diagnostics, files, ignoredOptions, stats } = await Deno.emit(
+      "file:///a.ts",
+      {
+        importMap: {
+          imports: {
+            "b": "./b.ts",
+          },
+        },
+        importMapPath: "file:///import-map.json",
+        sources: {
+          "file:///a.ts": `import * as b from "b"
+            console.log(b);`,
+          "file:///b.ts": `export const b = "b";`,
+        },
+      },
+    );
+    assertEquals(diagnostics.length, 0);
+    assert(!ignoredOptions);
+    assertEquals(stats.length, 12);
+    const keys = Object.keys(files).sort();
+    assertEquals(
+      keys,
+      [
+        "file:///a.ts.js",
+        "file:///a.ts.js.map",
+        "file:///b.ts.js",
+        "file:///b.ts.js.map",
+      ],
+    );
+  },
+});
+
+Deno.test({
+  name: "Deno.emit() - no check",
+  async fn() {
+    const { diagnostics, files, ignoredOptions, stats } = await Deno.emit(
       "/foo.ts",
       {
-        "/foo.ts": `console.log(document.getElementById("foo"));
-        console.log(Deno.args);`,
-      },
-      {
-        lib: ["dom", "es2018", "deno.ns"],
+        check: false,
+        sources: {
+          "/foo.ts": `export enum Foo { Foo, Bar, Baz };\n`,
+        },
       },
     );
-    assert(diagnostics == null);
-    assert(actual);
-    assertEquals(Object.keys(actual), ["/foo.js.map", "/foo.js"]);
+    assertEquals(diagnostics.length, 0);
+    assert(!ignoredOptions);
+    assertEquals(stats.length, 3);
+    const keys = Object.keys(files).sort();
+    assert(keys[0].endsWith("/foo.ts.js"));
+    assert(keys[1].endsWith("/foo.ts.js.map"));
+    assert(files[keys[0]].startsWith("export var Foo;"));
   },
 });
 
 Deno.test({
-  name: "Deno.compile() - properly handles .d.ts files",
+  name: "Deno.emit() - no check - config effects emit",
   async fn() {
-    const [diagnostics, actual] = await Deno.compile(
+    const { diagnostics, files, ignoredOptions, stats } = await Deno.emit(
       "/foo.ts",
       {
-        "/foo.ts": `console.log(Foo.bar);`,
-      },
-      {
-        types: ["./subdir/foo_types.d.ts"],
-      },
-    );
-    assert(diagnostics == null);
-    assert(actual);
-    assertEquals(Object.keys(actual), ["/foo.js.map", "/foo.js"]);
-  },
-});
-
-Deno.test({
-  name: "Deno.transpileOnly()",
-  async fn() {
-    const actual = await Deno.transpileOnly({
-      "foo.ts": `export enum Foo { Foo, Bar, Baz };\n`,
-    });
-    assert(actual);
-    assertEquals(Object.keys(actual), ["foo.ts"]);
-    assert(actual["foo.ts"].source.startsWith("export var Foo;"));
-    assert(actual["foo.ts"].map);
-  },
-});
-
-Deno.test({
-  name: "Deno.transpileOnly() - config effects commit",
-  async fn() {
-    const actual = await Deno.transpileOnly(
-      {
-        "foo.ts": `export enum Foo { Foo, Bar, Baz };\n`,
-      },
-      {
-        sourceMap: false,
-        module: "amd",
+        check: false,
+        compilerOptions: { removeComments: true },
+        sources: {
+          "/foo.ts":
+            `/** This is JSDoc */\nexport enum Foo { Foo, Bar, Baz };\n`,
+        },
       },
     );
-    assert(actual);
-    assertEquals(Object.keys(actual), ["foo.ts"]);
-    assert(actual["foo.ts"].source.startsWith("define("));
-    assert(actual["foo.ts"].map == null);
+    assertEquals(diagnostics.length, 0);
+    assert(!ignoredOptions);
+    assertEquals(stats.length, 3);
+    const keys = Object.keys(files).sort();
+    assert(keys[0].endsWith("/foo.ts.js"));
+    assert(keys[1].endsWith("/foo.ts.js.map"));
+    assert(!files[keys[0]].includes("This is JSDoc"));
   },
 });
 
 Deno.test({
-  name: "Deno.bundle() - sources passed",
+  name: "Deno.emit() - bundle as module script - with sources",
   async fn() {
-    const [diagnostics, actual] = await Deno.bundle("/foo.ts", {
-      "/foo.ts": `export * from "./bar.ts";\n`,
-      "/bar.ts": `export const bar = "bar";\n`,
-    });
-    assert(diagnostics == null);
-    assert(actual.includes(`__instantiate("foo", false)`));
-    assert(actual.includes(`__exp["bar"]`));
-  },
-});
-
-Deno.test({
-  name: "Deno.bundle() - no sources passed",
-  async fn() {
-    const [diagnostics, actual] = await Deno.bundle("./subdir/mod1.ts");
-    assert(diagnostics == null);
-    assert(actual.includes(`__instantiate("mod1", false)`));
-    assert(actual.includes(`__exp["printHello3"]`));
-  },
-});
-
-Deno.test({
-  name: "Deno.bundle() - compiler config effects emit",
-  async fn() {
-    const [diagnostics, actual] = await Deno.bundle(
+    const { diagnostics, files, ignoredOptions, stats } = await Deno.emit(
       "/foo.ts",
       {
-        "/foo.ts": `// random comment\nexport * from "./bar.ts";\n`,
-        "/bar.ts": `export const bar = "bar";\n`,
-      },
-      {
-        removeComments: true,
+        bundle: "module",
+        sources: {
+          "/foo.ts": `export * from "./bar.ts";\n`,
+          "/bar.ts": `export const bar = "bar";\n`,
+        },
       },
     );
-    assert(diagnostics == null);
-    assert(!actual.includes(`random`));
+    assertEquals(diagnostics.length, 0);
+    assert(!ignoredOptions);
+    assertEquals(stats.length, 12);
+    assertEquals(
+      Object.keys(files).sort(),
+      ["deno:///bundle.js", "deno:///bundle.js.map"].sort(),
+    );
+    assert(files["deno:///bundle.js"].includes(`const bar1 = "bar"`));
   },
 });
 
 Deno.test({
-  name: "Deno.bundle() - JS Modules included",
+  name: "Deno.emit() - bundle as module script - no sources",
   async fn() {
-    const [diagnostics, actual] = await Deno.bundle("/foo.js", {
-      "/foo.js": `export * from "./bar.js";\n`,
-      "/bar.js": `export const bar = "bar";\n`,
-    });
-    assert(diagnostics == null);
-    assert(actual.includes(`System.register("bar",`));
+    const { diagnostics, files, ignoredOptions, stats } = await Deno.emit(
+      "./subdir/mod1.ts",
+      {
+        bundle: "module",
+      },
+    );
+    assertEquals(diagnostics.length, 0);
+    assert(!ignoredOptions);
+    assertEquals(stats.length, 12);
+    assertEquals(
+      Object.keys(files).sort(),
+      ["deno:///bundle.js", "deno:///bundle.js.map"].sort(),
+    );
+    assert(files["deno:///bundle.js"].length);
   },
 });
 
 Deno.test({
-  name: "Deno.bundle - pre ES2017 uses ES5 loader",
+  name: "Deno.emit() - bundle as module script - include js modules",
   async fn() {
-    const [diagnostics, actual] = await Deno.bundle(
+    const { diagnostics, files, ignoredOptions, stats } = await Deno.emit(
+      "/foo.js",
+      {
+        bundle: "module",
+        sources: {
+          "/foo.js": `export * from "./bar.js";\n`,
+          "/bar.js": `export const bar = "bar";\n`,
+        },
+      },
+    );
+    assertEquals(diagnostics.length, 0);
+    assert(!ignoredOptions);
+    assertEquals(stats.length, 12);
+    assertEquals(
+      Object.keys(files).sort(),
+      ["deno:///bundle.js.map", "deno:///bundle.js"].sort(),
+    );
+    assert(files["deno:///bundle.js"].includes(`const bar1 = "bar"`));
+  },
+});
+
+Deno.test({
+  name: "Deno.emit() - generates diagnostics",
+  async fn() {
+    const { diagnostics, files } = await Deno.emit(
       "/foo.ts",
       {
-        "/foo.ts": `console.log("hello world!")\n`,
+        sources: {
+          "/foo.ts": `document.getElementById("foo");`,
+        },
       },
-      { target: "es2015" },
     );
-    assert(diagnostics == null);
-    assert(actual.includes(`var __awaiter = `));
-  },
-});
-
-Deno.test({
-  name: "runtime compiler APIs diagnostics",
-  async fn() {
-    const [diagnostics] = await Deno.compile("/foo.ts", {
-      "/foo.ts": `document.getElementById("foo");`,
-    });
-    assert(Array.isArray(diagnostics));
-    assert(diagnostics.length === 1);
+    assertEquals(diagnostics.length, 1);
+    const keys = Object.keys(files).sort();
+    assert(keys[0].endsWith("/foo.ts.js"));
+    assert(keys[1].endsWith("/foo.ts.js.map"));
   },
 });
 
 // See https://github.com/denoland/deno/issues/6908
 Deno.test({
-  name: "Deno.compile() - SWC diagnostics",
+  name: "Deno.emit() - invalid syntax does not panic",
   async fn() {
     await assertThrowsAsync(async () => {
-      await Deno.compile("main.js", {
-        "main.js": `
-      export class Foo {
-        constructor() {
-          console.log("foo");
-        }
-        export get() {
-          console.log("bar");
-        }
-      }`,
+      await Deno.emit("/main.js", {
+        sources: {
+          "/main.js": `
+            export class Foo {
+              constructor() {
+                console.log("foo");
+              }
+              export get() {
+                console.log("bar");
+              }
+            }`,
+        },
       });
     });
+  },
+});
+
+Deno.test({
+  name: 'Deno.emit() - allows setting of "importsNotUsedAsValues"',
+  async fn() {
+    const { diagnostics } = await Deno.emit("/a.ts", {
+      sources: {
+        "/a.ts": `import { B } from "./b.ts";
+          const b: B = { b: "b" };`,
+        "/b.ts": `export interface B {
+          b:string;
+        };`,
+      },
+      compilerOptions: {
+        importsNotUsedAsValues: "error",
+      },
+    });
+    assert(diagnostics);
+    assertEquals(diagnostics.length, 1);
+    assert(diagnostics[0].messageText);
+    assert(diagnostics[0].messageText.includes("This import is never used"));
+  },
+});
+
+Deno.test({
+  name: "Deno.emit() - Unknown media type does not panic",
+  async fn() {
+    await assertThrowsAsync(async () => {
+      await Deno.emit("https://example.com/foo", {
+        sources: {
+          "https://example.com/foo": `let foo: string = "foo";`,
+        },
+      });
+    });
+  },
+});
+
+Deno.test({
+  name: "Deno.emit() - non-normalized specifier and source can compile",
+  async fn() {
+    const specifier = "https://example.com/foo//bar.ts";
+    const { files } = await Deno.emit(specifier, {
+      sources: {
+        [specifier]: `export let foo: string = "foo";`,
+      },
+    });
+    assertEquals(files[`${specifier}.js`], 'export let foo = "foo";\n');
+    assert(typeof files[`${specifier}.js.map`] === "string");
+  },
+});
+
+Deno.test({
+  name: `Deno.emit() - bundle as classic script iife`,
+  async fn() {
+    const { diagnostics, files } = await Deno.emit("/a.ts", {
+      bundle: "classic",
+      sources: {
+        "/a.ts": `import { b } from "./b.ts";
+          console.log(b);`,
+        "/b.ts": `export const b = "b";`,
+      },
+    });
+    assert(diagnostics);
+    assertEquals(diagnostics.length, 0);
+    assertEquals(Object.keys(files).length, 2);
+    assert(files["deno:///bundle.js"].startsWith("(function() {\n"));
+    assert(files["deno:///bundle.js"].endsWith("})();\n"));
+    assert(files["deno:///bundle.js.map"]);
+  },
+});
+
+Deno.test({
+  name: `Deno.emit() - throws descriptive error when unable to load import map`,
+  async fn() {
+    await assertThrowsAsync(
+      async () => {
+        await Deno.emit("/a.ts", {
+          bundle: "classic",
+          sources: {
+            "/a.ts": `console.log("hello");`,
+          },
+          importMapPath: "file:///import_map_does_not_exist.json",
+        });
+      },
+      Error,
+      "Unable to load 'file:///import_map_does_not_exist.json' import map",
+    );
+  },
+});
+
+Deno.test({
+  name: `Deno.emit() - support source maps with bundle option`,
+  async fn() {
+    {
+      const { diagnostics, files } = await Deno.emit("/a.ts", {
+        bundle: "classic",
+        sources: {
+          "/a.ts": `import { b } from "./b.ts";
+          console.log(b);`,
+          "/b.ts": `export const b = "b";`,
+        },
+        compilerOptions: {
+          inlineSourceMap: true,
+          sourceMap: false,
+        },
+      });
+      assert(diagnostics);
+      assertEquals(diagnostics.length, 0);
+      assertEquals(Object.keys(files).length, 1);
+      assertStringIncludes(files["deno:///bundle.js"], "sourceMappingURL");
+    }
+
+    const { diagnostics, files } = await Deno.emit("/a.ts", {
+      bundle: "classic",
+      sources: {
+        "/a.ts": `import { b } from "./b.ts";
+        console.log(b);`,
+        "/b.ts": `export const b = "b";`,
+      },
+    });
+    assert(diagnostics);
+    assertEquals(diagnostics.length, 0);
+    assertEquals(Object.keys(files).length, 2);
+    assert(files["deno:///bundle.js"]);
+    assert(files["deno:///bundle.js.map"]);
+  },
+});
+
+Deno.test({
+  name: `Deno.emit() - graph errors as diagnostics`,
+  ignore: Deno.build.os === "windows",
+  async fn() {
+    const { diagnostics } = await Deno.emit("/a.ts", {
+      sources: {
+        "/a.ts": `import { b } from "./b.ts";
+        console.log(b);`,
+      },
+    });
+    assert(diagnostics);
+    assertEquals(diagnostics, [
+      {
+        category: 1,
+        code: 2305,
+        start: { line: 0, character: 9 },
+        end: { line: 0, character: 10 },
+        messageText:
+          `Module '"deno:///missing_dependency.d.ts"' has no exported member 'b'.`,
+        messageChain: null,
+        source: null,
+        sourceLine: 'import { b } from "./b.ts";',
+        fileName: "file:///a.ts",
+        relatedInformation: null,
+      },
+      {
+        category: 1,
+        code: 900001,
+        start: null,
+        end: null,
+        messageText: "Unable to find specifier in sources: file:///b.ts",
+        messageChain: null,
+        source: null,
+        sourceLine: null,
+        fileName: "file:///b.ts",
+        relatedInformation: null,
+      },
+    ]);
+    assert(
+      Deno.formatDiagnostics(diagnostics).includes(
+        "Unable to find specifier in sources: file:///b.ts",
+      ),
+    );
   },
 });

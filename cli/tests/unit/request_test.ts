@@ -1,8 +1,8 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
-import { unitTest, assert, assertEquals } from "./test_util.ts";
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
+import { assertEquals, assertStringIncludes, unitTest } from "./test_util.ts";
 
-unitTest(function fromInit(): void {
-  const req = new Request("https://example.com", {
+unitTest(async function fromInit(): Promise<void> {
+  const req = new Request("http://foo/", {
     body: "ahoyhoy",
     method: "POST",
     headers: {
@@ -10,31 +10,40 @@ unitTest(function fromInit(): void {
     },
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  assertEquals("ahoyhoy", (req as any)._bodySource);
-  assertEquals(req.url, "https://example.com");
+  assertEquals("ahoyhoy", await req.text());
+  assertEquals(req.url, "http://foo/");
   assertEquals(req.headers.get("test-header"), "value");
 });
 
-unitTest(function fromRequest(): void {
-  const r = new Request("https://example.com");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (r as any)._bodySource = "ahoyhoy";
-  r.headers.set("test-header", "value");
+unitTest(function requestNonString(): void {
+  const nonString = {
+    toString() {
+      return "http://foo/";
+    },
+  };
+  // deno-lint-ignore ban-ts-comment
+  // @ts-expect-error
+  assertEquals(new Request(nonString).url, "http://foo/");
+});
 
-  const req = new Request(r);
+unitTest(function methodNonString(): void {
+  assertEquals(new Request("http://foo/", { method: undefined }).method, "GET");
+});
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  assertEquals((req as any)._bodySource, (r as any)._bodySource);
-  assertEquals(req.url, r.url);
-  assertEquals(req.headers.get("test-header"), r.headers.get("test-header"));
+unitTest(function requestRelativeUrl(): void {
+  assertEquals(
+    new Request("relative-url").url,
+    "http://js-unit-tests/foo/relative-url",
+  );
 });
 
 unitTest(async function cloneRequestBodyStream(): Promise<void> {
   // hack to get a stream
-  const stream = new Request("", { body: "a test body" }).body;
-  const r1 = new Request("https://example.com", {
+  const stream =
+    new Request("http://foo/", { body: "a test body", method: "POST" }).body;
+  const r1 = new Request("http://foo/", {
     body: stream,
+    method: "POST",
   });
 
   const r2 = r1.clone();
@@ -43,7 +52,19 @@ unitTest(async function cloneRequestBodyStream(): Promise<void> {
   const b2 = await r2.text();
 
   assertEquals(b1, b2);
+});
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  assert((r1 as any)._bodySource !== (r2 as any)._bodySource);
+unitTest(function customInspectFunction(): void {
+  const request = new Request("https://example.com");
+  assertEquals(
+    Deno.inspect(request),
+    `Request {
+  bodyUsed: false,
+  headers: Headers {},
+  method: "GET",
+  redirect: "follow",
+  url: "https://example.com/"
+}`,
+  );
+  assertStringIncludes(Deno.inspect(Request.prototype), "Request");
 });

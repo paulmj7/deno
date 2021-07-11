@@ -1,5 +1,5 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
-import { unitTest, assertEquals } from "./test_util.ts";
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
+import { assertEquals, unitTest } from "./test_util.ts";
 
 unitTest(function fileReaderConstruct(): void {
   const fr = new FileReader();
@@ -218,3 +218,25 @@ unitTest(async function fileReaderLoadBlobAbort(): Promise<void> {
     fr.abort();
   });
 });
+
+unitTest(
+  async function fileReaderDispatchesEventsInCorrectOrder(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const fr = new FileReader();
+      const b1 = new Blob(["Hello World"]);
+      let out = "";
+      fr.addEventListener("loadend", () => {
+        out += "1";
+      });
+      fr.onloadend = (_ev): void => {
+        out += "2";
+      };
+      fr.addEventListener("loadend", () => {
+        assertEquals(out, "12");
+        resolve();
+      });
+
+      fr.readAsDataURL(b1);
+    });
+  },
+);

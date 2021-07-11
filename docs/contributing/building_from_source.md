@@ -25,20 +25,15 @@ Extra steps for Windows users:
 
 ### Prerequisites
 
-You will need to [install Rust](https://www.rust-lang.org/tools/install). Make
-sure to fetch the latest stable release as Deno does not support nightly builds.
-Check that you have the required tools:
+> Deno requires the progressively latest stable release of Rust. Deno does not
+> support the Rust nightlies.
+
+[Update or Install Rust](https://www.rust-lang.org/tools/install). Check that
+Rust installed/updated correctly:
 
 ```
 rustc -V
 cargo -V
-```
-
-### Setup rust targets and components
-
-```shell
-rustup target add wasm32-unknown-unknown
-rustup target add wasm32-wasi
 ```
 
 ### Building Deno
@@ -57,9 +52,9 @@ V8_FROM_SOURCE=1 cargo build -vv
 
 When building V8 from source, there are more dependencies:
 
-[Python 2](https://www.python.org/downloads). Ensure that a suffix-less
-`python`/`python.exe` exists in your `PATH` and it refers to Python 2,
-[not 3](https://github.com/denoland/deno/issues/464#issuecomment-411795578).
+[Python 3](https://www.python.org/downloads) for running WPT tests. Ensure that
+a suffix-less `python`/`python.exe` exists in your `PATH` and it refers to
+Python 3.
 
 For Linux users glib-2.0 development files must also be installed. (On Ubuntu,
 run `apt install libglib2.0-dev`.)
@@ -84,7 +79,7 @@ For Windows users:
 
 2. Enable "Debugging Tools for Windows". Go to "Control Panel" → "Programs" →
    "Programs and Features" → Select "Windows Software Development Kit - Windows
-   10" → "Change" → "Change" → Check "Debugging Tools For Windows" → "Change" ->
+   10" → "Change" → "Change" → Check "Debugging Tools For Windows" → "Change" →
    "Finish". Or use:
    [Debugging Tools for Windows](https://docs.microsoft.com/en-us/windows-hardware/drivers/debugger/)
    (Notice: it will download the files, you should install
@@ -101,7 +96,7 @@ Build with Cargo:
 # Build:
 cargo build -vv
 
-# Build errors?  Ensure you have latest master and try building again, or if that doesn't work try:
+# Build errors?  Ensure you have latest main and try building again, or if that doesn't work try:
 cargo clean && cargo build -vv
 
 # Run:

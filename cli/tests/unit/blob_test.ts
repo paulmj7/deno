@@ -1,7 +1,11 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
-import { unitTest, assert, assertEquals } from "./test_util.ts";
-import { concat } from "../../../std/bytes/mod.ts";
-import { decode } from "../../../std/encoding/utf8.ts";
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+  unitTest,
+} from "./test_util.ts";
+import { concat } from "../../../test_util/std/bytes/mod.ts";
 
 unitTest(function blobString(): void {
   const b1 = new Blob(["Hello World"]);
@@ -46,11 +50,12 @@ unitTest(function blobShouldNotThrowError(): void {
   let hasThrown = false;
 
   try {
-    const options1: object = {
+    // deno-lint-ignore no-explicit-any
+    const options1: any = {
       ending: "utf8",
       hasOwnProperty: "hasOwnProperty",
     };
-    const options2: object = Object.create(null);
+    const options2 = Object.create(null);
     new Blob(["Hello World"], options1);
     new Blob(["Hello World"], options2);
   } catch {
@@ -60,14 +65,16 @@ unitTest(function blobShouldNotThrowError(): void {
   assertEquals(hasThrown, false);
 });
 
+/* TODO https://github.com/denoland/deno/issues/7540
 unitTest(function nativeEndLine(): void {
-  const options: object = {
+  const options = {
     ending: "native",
-  };
+  } as const;
   const blob = new Blob(["Hello\nWorld"], options);
 
   assertEquals(blob.size, Deno.build.os === "windows" ? 12 : 11);
 });
+*/
 
 unitTest(async function blobText(): Promise<void> {
   const blob = new Blob(["Hello World"]);
@@ -88,7 +95,8 @@ unitTest(async function blobStream(): Promise<void> {
     }
   };
   await read();
-  assertEquals(decode(bytes), "Hello World");
+  const decoder = new TextDecoder();
+  assertEquals(decoder.decode(bytes), "Hello World");
 });
 
 unitTest(async function blobArrayBuffer(): Promise<void> {
@@ -100,4 +108,13 @@ unitTest(async function blobArrayBuffer(): Promise<void> {
 unitTest(function blobConstructorNameIsBlob(): void {
   const blob = new Blob();
   assertEquals(blob.constructor.name, "Blob");
+});
+
+unitTest(function blobCustomInspectFunction(): void {
+  const blob = new Blob();
+  assertEquals(
+    Deno.inspect(blob),
+    `Blob { size: 0, type: "" }`,
+  );
+  assertStringIncludes(Deno.inspect(Blob.prototype), "Blob");
 });

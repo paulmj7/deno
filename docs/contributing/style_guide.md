@@ -5,7 +5,7 @@
 Most modules in the repository should have the following copyright header:
 
 ```ts
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
 ```
 
 If the code originates elsewhere, ensure that the file has the proper copyright
@@ -49,8 +49,7 @@ Follow Rust conventions and be consistent with existing code.
 
 ## TypeScript
 
-The TypeScript portions of the codebase include `cli/js` for the built-ins and
-the standard library `std`.
+The TypeScript portion of the code base is the standard library `std`.
 
 ### Use TypeScript instead of JavaScript.
 
@@ -174,11 +173,33 @@ export interface PWrite {
 export function pwrite(options: PWrite) {}
 ```
 
+### Export all interfaces that are used as parameters to an exported member
+
+Whenever you are using interfaces that are included in the arguments of an
+exported member, you should export the interface that is used. Here is an
+example:
+
+```ts
+// my_file.ts
+export interface Person {
+  name: string;
+  age: number;
+}
+
+export function createPerson(name: string, age: number): Person {
+  return { name, age };
+}
+
+// mod.ts
+export { createPerson } from "./my_file.ts";
+export type { Person } from "./my_file.ts";
+```
+
 ### Minimize dependencies; do not make circular imports.
 
-Although `cli/js` and `std` have no external dependencies, we must still be
-careful to keep internal dependencies simple and manageable. In particular, be
-careful not to introduce circular imports.
+Although `std` has no external dependencies, we must still be careful to keep
+internal dependencies simple and manageable. In particular, be careful not to
+introduce circular imports.
 
 ### If a filename starts with an underscore: `_foo.ts`, do not link to it.
 
@@ -241,28 +262,40 @@ And not:
  */
 ```
 
-Code examples should not utilise the triple-back tick (\`\`\`) notation or tags.
-They should just be marked by indentation, which requires a break before the
-block and 6 additional spaces for each line of the example. This is 4 more than
-the first column of the comment. For example:
+Code examples should utilize markdown format, like so:
 
-```ts
+````ts
 /** A straight forward comment and an example:
- *
- *       import { foo } from "deno";
- *       foo("bar");
+ * ```ts
+ * import { foo } from "deno";
+ * foo("bar");
+ * ```
  */
+````
+
+Code examples should not contain additional comments and must not be indented.
+It is already inside a comment. If it needs further comments it is not a good
+example.
+
+### Resolve linting problems using directives
+
+Currently, the building process uses `dlint` to validate linting problems in the
+code. If the task requires code that is non-conformant to linter use
+`deno-lint-ignore <code>` directive to suppress the warning.
+
+```typescript
+// deno-lint-ignore no-explicit-any
+let x: any;
 ```
 
-Code examples should not contain additional comments. It is already inside a
-comment. If it needs further comments it is not a good example.
+This ensures the continuous integration process doesn't fail due to linting
+problems, but it should be used scarcely.
 
 ### Each module should come with a test module.
 
 Every module with public functionality `foo.ts` should come with a test module
-`foo_test.ts`. A test for a `cli/js` module should go in `cli/js/tests` due to
-their different contexts, otherwise it should just be a sibling to the tested
-module.
+`foo_test.ts`. A test for a `std` module should go in `std/tests` due to their
+different contexts, otherwise it should just be a sibling to the tested module.
 
 ### Unit Tests should be explicit.
 
@@ -313,13 +346,13 @@ export function foo(): string {
 programs can rely on. We want to guarantee to users that this code does not
 include potentially unreviewed third party code.
 
-#### Document and maintain browser compatiblity.
+#### Document and maintain browser compatibility.
 
 If a module is browser compatible, include the following in the JSDoc at the top
 of the module:
 
 ```ts
-/** This module is browser compatible. */
+// This module is browser compatible.
 ```
 
 Maintain browser compatibility for such a module by either not using the global

@@ -1,15 +1,17 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
 import {
-  unitTest,
   assert,
   assertEquals,
-  createResolvable,
+  assertStringIncludes,
+  assertThrows,
+  deferred,
+  unitTest,
 } from "./test_util.ts";
 
 unitTest({ perms: { hrtime: false } }, async function performanceNow(): Promise<
   void
 > {
-  const resolvable = createResolvable();
+  const resolvable = deferred();
   const start = performance.now();
   setTimeout((): void => {
     const end = performance.now();
@@ -34,33 +36,92 @@ unitTest(function performanceMark() {
 });
 
 unitTest(function performanceMeasure() {
-  const mark = performance.mark("test");
+  const markName1 = "mark1";
+  const measureName1 = "measure1";
+  const measureName2 = "measure2";
+  const mark1 = performance.mark(markName1);
   return new Promise((resolve, reject) => {
     setTimeout(() => {
       try {
-        const measure = performance.measure("test", "test");
-        assert(measure instanceof PerformanceMeasure);
-        assertEquals(measure.detail, null);
-        assertEquals(measure.name, "test");
-        assertEquals(measure.entryType, "measure");
-        assert(measure.startTime > 0);
-        assertEquals(mark.startTime, measure.startTime);
+        const measure1 = performance.measure(measureName1, markName1);
+        const measure2 = performance.measure(
+          measureName2,
+          undefined,
+          markName1,
+        );
+        assert(measure1 instanceof PerformanceMeasure);
+        assertEquals(measure1.detail, null);
+        assertEquals(measure1.name, measureName1);
+        assertEquals(measure1.entryType, "measure");
+        assert(measure1.startTime > 0);
+        assertEquals(measure2.startTime, 0);
+        assertEquals(mark1.startTime, measure1.startTime);
+        assertEquals(mark1.startTime, measure2.duration);
         assert(
-          measure.duration >= 100,
-          `duration below 100ms: ${measure.duration}`,
+          measure1.duration >= 100,
+          `duration below 100ms: ${measure1.duration}`,
         );
         assert(
-          measure.duration < 500,
-          `duration exceeds 500ms: ${measure.duration}`,
+          measure1.duration < 500,
+          `duration exceeds 500ms: ${measure1.duration}`,
         );
         const entries = performance.getEntries();
-        assert(entries[entries.length - 1] === measure);
-        const measureEntries = performance.getEntriesByName("test", "measure");
-        assert(measureEntries[measureEntries.length - 1] === measure);
+        assert(entries[entries.length - 1] === measure2);
+        const entriesByName = performance.getEntriesByName(
+          measureName1,
+          "measure",
+        );
+        assert(entriesByName[entriesByName.length - 1] === measure1);
+        const measureEntries = performance.getEntriesByType("measure");
+        assert(measureEntries[measureEntries.length - 1] === measure2);
       } catch (e) {
         return reject(e);
       }
       resolve();
     }, 100);
   });
+});
+
+unitTest(function performanceCustomInspectFunction(): void {
+  assertStringIncludes(Deno.inspect(performance), "Performance");
+  assertStringIncludes(
+    Deno.inspect(Performance.prototype),
+    "Performance",
+  );
+});
+
+unitTest(function performanceMarkCustomInspectFunction(): void {
+  const mark1 = performance.mark("mark1");
+  assertStringIncludes(Deno.inspect(mark1), "PerformanceMark");
+  assertStringIncludes(
+    Deno.inspect(PerformanceMark.prototype),
+    "PerformanceMark",
+  );
+});
+
+unitTest(function performanceMeasureCustomInspectFunction(): void {
+  const measure1 = performance.measure("measure1");
+  assertStringIncludes(Deno.inspect(measure1), "PerformanceMeasure");
+  assertStringIncludes(
+    Deno.inspect(PerformanceMeasure.prototype),
+    "PerformanceMeasure",
+  );
+});
+
+unitTest(function performanceIllegalConstructor() {
+  assertThrows(() => new Performance(), TypeError, "Illegal constructor");
+  assertEquals(Performance.length, 0);
+});
+
+unitTest(function performanceEntryIllegalConstructor() {
+  assertThrows(() => new PerformanceEntry(), TypeError, "Illegal constructor");
+  assertEquals(PerformanceEntry.length, 0);
+});
+
+unitTest(function performanceMeasureIllegalConstructor() {
+  assertThrows(
+    () => new PerformanceMeasure(),
+    TypeError,
+    "Illegal constructor",
+  );
 });

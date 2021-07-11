@@ -1,28 +1,34 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
 import { assert, unitTest } from "./test_util.ts";
 
 unitTest(function formatDiagnosticBasic() {
-  const fixture: Deno.DiagnosticItem[] = [
+  const fixture: Deno.Diagnostic[] = [
     {
-      message: "Example error",
-      category: Deno.DiagnosticCategory.Error,
-      sourceLine: "abcdefghijklmnopqrstuv",
-      lineNumber: 1000,
-      scriptResourceName: "foo.ts",
-      startColumn: 1,
-      endColumn: 2,
-      code: 4000,
+      start: {
+        line: 0,
+        character: 0,
+      },
+      end: {
+        line: 0,
+        character: 7,
+      },
+      fileName: "test.ts",
+      messageText:
+        "Cannot find name 'console'. Do you need to change your target library? Try changing the `lib` compiler option to include 'dom'.",
+      sourceLine: `console.log("a");`,
+      category: 1,
+      code: 2584,
     },
   ];
   const out = Deno.formatDiagnostics(fixture);
-  assert(out.includes("Example error"));
-  assert(out.includes("foo.ts"));
+  assert(out.includes("Cannot find name"));
+  assert(out.includes("test.ts"));
 });
 
 unitTest(function formatDiagnosticError() {
   let thrown = false;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const bad = ([{ hello: 123 }] as any) as Deno.DiagnosticItem[];
+  // deno-lint-ignore no-explicit-any
+  const bad = ([{ hello: 123 }] as any) as Deno.Diagnostic[];
   try {
     Deno.formatDiagnostics(bad);
   } catch (e) {

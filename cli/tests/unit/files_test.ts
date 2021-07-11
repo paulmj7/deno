@@ -1,9 +1,12 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
+
+// deno-lint-ignore-file no-deprecated-deno-api
+
 import {
-  unitTest,
   assert,
   assertEquals,
   assertThrowsAsync,
+  unitTest,
 } from "./test_util.ts";
 
 unitTest(function filesStdioFileDescriptors(): void {
@@ -319,10 +322,10 @@ unitTest(
     // writing null should throw an error
     await assertThrowsAsync(
       async (): Promise<void> => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // deno-lint-ignore no-explicit-any
         await file.write(null as any);
       },
-    ); // TODO: Check error kind when dispatch_minimal pipes errors properly
+    ); // TODO(bartlomieju): Check error kind when dispatch_minimal pipes errors properly
     file.close();
     await Deno.remove(tempDir, { recursive: true });
   },
@@ -346,10 +349,10 @@ unitTest(
 
     // reading file into null buffer should throw an error
     await assertThrowsAsync(async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // deno-lint-ignore no-explicit-any
       await file.read(null as any);
     }, TypeError);
-    // TODO: Check error kind when dispatch_minimal pipes errors properly
+    // TODO(bartlomieju): Check error kind when dispatch_minimal pipes errors properly
 
     file.close();
     await Deno.remove(tempDir, { recursive: true });
@@ -382,7 +385,7 @@ unitTest(
     assert(fileInfo.size === 5);
     f.close();
 
-    // TODO: test different modes
+    // TODO(bartlomieju): test different modes
     await Deno.remove(tempDir, { recursive: true });
   },
 );
@@ -425,7 +428,7 @@ unitTest(
     assert(fileInfo.size === 5);
     f.close();
 
-    // TODO: test different modes
+    // TODO(bartlomieju): test different modes
     await Deno.remove(tempDir, { recursive: true });
   },
 );
@@ -477,7 +480,7 @@ unitTest(
     try {
       const buf = new Uint8Array(20);
       await file.read(buf);
-    } catch (e) {
+    } catch (_e) {
       thrown = true;
     } finally {
       assert(thrown, "'w' mode shouldn't allow to read file");

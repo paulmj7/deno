@@ -1,5 +1,5 @@
-// Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
-import { unitTest, assertEquals } from "./test_util.ts";
+// Copyright 2018-2021 the Deno authors. All rights reserved. MIT license.
+import { assertEquals, unitTest } from "./test_util.ts";
 
 unitTest(function addEventListenerTest(): void {
   const document = new EventTarget();
@@ -223,3 +223,23 @@ unitTest(
     assertEquals(callCount, 2);
   },
 );
+unitTest(function eventTargetDispatchShouldSetTargetNoListener(): void {
+  const target = new EventTarget();
+  const event = new Event("foo");
+  assertEquals(event.target, null);
+  target.dispatchEvent(event);
+  assertEquals(event.target, target);
+});
+
+unitTest(function eventTargetDispatchShouldSetTargetInListener(): void {
+  const target = new EventTarget();
+  const event = new Event("foo");
+  assertEquals(event.target, null);
+  let called = false;
+  target.addEventListener("foo", (e) => {
+    assertEquals(e.target, target);
+    called = true;
+  });
+  target.dispatchEvent(event);
+  assertEquals(called, true);
+});
